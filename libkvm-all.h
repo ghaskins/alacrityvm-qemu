@@ -943,6 +943,50 @@ int kvm_get_irq_route_gsi(kvm_context_t kvm);
  */
 int kvm_irqfd(kvm_context_t kvm, int gsi, int flags);
 
+enum {
+	ioeventfd_option_pio,
+	ioeventfd_option_datamatch,
+};
+
+#define IOEVENTFD_FLAG_PIO      (1 << ioeventfd_option_pio)
+#define IOEVENTFD_FLAG_DATAMATCH  (1 << ioeventfd_option_datamatch)
+
+/*!
+ * \brief Assign an eventfd to an IO port (PIO or MMIO)
+ *
+ * Assigns an eventfd based file-descriptor to a specific PIO or MMIO
+ * address range.  Any guest writes to the specified range will generate
+ * an eventfd signal.
+ *
+ * A data-match pointer can be optionally provided in "datamatch" and only
+ * writes which match this value exactly will generate an event.  The length
+ * of the datamatch is established by the length of the overall IO range, and
+ * therefore must be in a natural byte-width for the IO routines of your
+ * particular architecture (e.g. 1, 2, 4, or 8 bytes on x86_64).
+ *
+ * \param kvm Pointer to the current kvm_context
+ * \param addr The IO address
+ * \param len The length of the IO region at the address
+ * \param fd The eventfd file-descriptor
+ * \param datamatch A optional data-match token
+ * \param flags FLAG_PIO: PIO, else MMIO, FLAG_DATAMATCH, datamatch valid
+ */
+int kvm_assign_ioeventfd(kvm_context_t kvm, unsigned long addr, size_t len,
+			  int fd, __u64 datamatch, int flags);
+
+/*!
+ * \brief Deassign an ioeventfd from a previously registered IO port
+ *
+ * Deassigns an ioeventfd previously registered with kvm_assign_ioeventfd()
+ *
+ * \param kvm Pointer to the current kvm_context
+ * \param addr The IO address to deassign
+ * \param fd The eventfd file-descriptor
+ * \param flags FLAG_PIO: PIO, else MMIO
+ */
+int kvm_deassign_ioeventfd(kvm_context_t kvm, unsigned long addr,
+			    int fd, int flags);
+
 #ifdef KVM_CAP_DEVICE_MSIX
 int kvm_assign_set_msix_nr(kvm_context_t kvm,
 			   struct kvm_assigned_msix_nr *msix_nr);

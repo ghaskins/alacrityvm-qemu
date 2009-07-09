@@ -1688,6 +1688,75 @@ int kvm_irqfd(kvm_context_t kvm, int gsi, int flags)
 }
 
 #endif /* KVM_CAP_IRQFD */
+
+#ifdef KVM_CAP_IOEVENTFD
+
+#include <sys/eventfd.h>
+
+int kvm_assign_ioeventfd(kvm_context_t kvm, unsigned long addr, size_t len,
+			  int fd, __u64 datamatch, int flags)
+{
+	int r;
+	int type = flags & IOEVENTFD_FLAG_PIO; 
+	struct kvm_ioeventfd data = {
+		.datamatch = datamatch,
+		.addr    = addr,
+		.len     = len,
+		.fd      = fd,
+	};
+
+	data.flags |= flags & IOEVENTFD_FLAG_DATAMATCH ?
+	  KVM_IOEVENTFD_FLAG_DATAMATCH : 0;
+	data.flags |= type ? KVM_IOEVENTFD_FLAG_PIO : 0;
+
+	if (!kvm_check_extension(kvm, KVM_CAP_IOEVENTFD))
+		return -ENOENT;
+
+	r = ioctl(kvm->vm_fd, KVM_IOEVENTFD, &data);
+	if (r == -1)
+		r = -errno;
+	return r;
+}
+
+int kvm_deassign_ioeventfd(kvm_context_t kvm, unsigned long addr, int fd,
+			    int flags)
+{
+	int r;
+	int type = flags & IOEVENTFD_FLAG_PIO; 
+	struct kvm_ioeventfd data = {
+		.addr    = addr,
+		.fd      = fd,
+		.flags   = KVM_IOEVENTFD_FLAG_DEASSIGN |
+		(type ? KVM_IOEVENTFD_FLAG_PIO : 0),
+	};
+
+	if (!kvm_check_extension(kvm, KVM_CAP_IOEVENTFD))
+		return -ENOENT;
+
+	r = ioctl(kvm->vm_fd, KVM_IOEVENTFD, &data);
+	if (r == -1)
+		r = -errno;
+	return r;
+}
+
+#else /* KVM_CAP_IOEVENTFD */
+
+int kvm_assign_ioeventfd(kvm_context_t kvm, unsigned long addr, size_t len,
+			  int fd, __u64 datamatch, int flags)
+{
+	return -ENOSYS;
+}
+
+int kvm_deassign_ioeventfd(kvm_context_t kvm, unsigned long addr, int fd,
+			    int flags)
+{
+	return -ENOSYS;
+}
+
+#endif /* KVM_CAP_IOEVENTFD */
+
+
+
 static inline unsigned long kvm_get_thread_id(void)
 {
     return syscall(SYS_gettid);
