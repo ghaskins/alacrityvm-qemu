@@ -79,6 +79,12 @@ endif
 
 PROGS=$(QEMU_PROG)
 
+ifndef LINUX_HEADERS
+LINUX_HEADERS=/usr/include
+endif
+
+CFLAGS+= -I$(LINUX_HEADERS)
+
 # cc-option
 # Usage: CFLAGS+=$(call cc-option, $(CFLAGS), -falign-functions=0, -malign-functions=0)
 
