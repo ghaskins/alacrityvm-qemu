@@ -340,6 +340,28 @@ struct kvm_guest_debug {
 	struct kvm_guest_debug_arch arch;
 };
 
+enum {
+       kvm_ioeventfd_flag_nr_datamatch,
+       kvm_ioeventfd_flag_nr_pio,
+       kvm_ioeventfd_flag_nr_deassign,
+       kvm_ioeventfd_flag_nr_max,
+};
+
+#define KVM_IOEVENTFD_FLAG_DATAMATCH (1 << kvm_ioeventfd_flag_nr_datamatch)
+#define KVM_IOEVENTFD_FLAG_PIO       (1 << kvm_ioeventfd_flag_nr_pio)
+#define KVM_IOEVENTFD_FLAG_DEASSIGN  (1 << kvm_ioeventfd_flag_nr_deassign)
+
+#define KVM_IOEVENTFD_VALID_FLAG_MASK  ((1 << kvm_ioeventfd_flag_nr_max) - 1)
+
+struct kvm_ioeventfd {
+       __u64 datamatch;
+       __u64 addr;        /* legal pio/mmio address */
+       __u32 len;         /* 1, 2, 4, or 8 bytes    */
+       __s32 fd;
+       __u32 flags;
+       __u8  pad[36];
+};
+
 #define KVM_TRC_SHIFT           16
 /*
  * kvm trace categories
@@ -463,7 +485,9 @@ struct kvm_trace_rec {
 #define KVM_CAP_ASSIGN_DEV_IRQ 29
 /* Another bug in KVM_SET_USER_MEMORY_REGION fixed: */
 #define KVM_CAP_JOIN_MEMORY_REGIONS_WORKS 30
+#define KVM_CAP_IRQFD 32
 #define KVM_CAP_PIT2 33
+#define KVM_CAP_IOEVENTFD 36
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -502,6 +526,15 @@ struct kvm_irq_routing {
 };
 
 #endif
+
+#define KVM_IRQFD_FLAG_DEASSIGN (1 << 0)
+
+struct kvm_irqfd {
+       __u32 fd;
+       __u32 gsi;
+       __u32 flags;
+       __u8  pad[20];
+};
 
 /*
  * ioctls for VM fds
@@ -547,7 +580,9 @@ struct kvm_irq_routing {
 #define KVM_ASSIGN_SET_MSIX_ENTRY \
 			_IOW(KVMIO, 0x74, struct kvm_assigned_msix_entry)
 #define KVM_DEASSIGN_DEV_IRQ       _IOW(KVMIO, 0x75, struct kvm_assigned_irq)
+#define KVM_IRQFD                  _IOW(KVMIO, 0x76, struct kvm_irqfd)
 #define KVM_CREATE_PIT2		   _IOW(KVMIO, 0x77, struct kvm_pit_config)
+#define KVM_IOEVENTFD              _IOW(KVMIO, 0x79, struct kvm_ioeventfd)
 
 /*
  * ioctls for vcpu fds
