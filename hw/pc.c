@@ -37,6 +37,7 @@
 #include "watchdog.h"
 #include "smbios.h"
 #include "device-assignment.h"
+#include "vbus.h"
 
 #include "qemu-kvm.h"
 
@@ -1330,6 +1331,10 @@ static void pc_init1(ram_addr_t ram_size,
     }
 
     watchdog_pc_init(pci_bus);
+
+    if (pci_enabled) {
+      pci_vbus_init(pci_bus);
+    }
 
     for(i = 0; i < nb_nics; i++) {
         NICInfo *nd = &nd_table[i];
