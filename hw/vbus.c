@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2009, Novell Inc, Gregory Haskins <ghaskins@novell.com>
  *
- */ 
+ */
 
 #include <stdio.h>
 #include <unistd.h>
@@ -33,9 +33,6 @@
 #define PCI_MSI_DATA_64		12	/* 16 bits of data for 64-bit devices */
 #define PCI_MSI_MASK_BIT	16	/* Mask bits register */
 
-#define REG_OFFSET_DATA   offsetof(struct vbus_pci_regs, hypercall.data)
-#define REG_OFFSET_RESULT offsetof(struct vbus_pci_regs, hypercall.result)
-
 #define EVENTQ_COUNT 8
 
 struct Priv {
@@ -47,6 +44,7 @@ struct Priv {
 			int                          irqfd;
 			int                          ioeventfd;
 		} irq[EVENTQ_COUNT];
+		int                                  count;
 		int                                  enabled:1;
 	} interrupts;
 	struct {
@@ -54,7 +52,8 @@ struct Priv {
 		uint32_t                     addr;
 	} mmio;
 	struct vbus_pci_regs                 registers;
-	uint32_t                             pioaddr;
+	uint32_t                             signals;
+	uint32_t                             hcver;
 };
 
 static struct Priv *to_priv(PCIDevice *dev)
@@ -77,56 +76,181 @@ vbus_pci_pio_map(PCIDevice *pci_dev, int region_num,
 		  uint32_t addr, uint32_t size, int type)
 {
 	struct Priv *priv = to_priv(pci_dev);
+	int ret;
 
-	priv->pioaddr = addr;
+	if (!priv->signals) {
+		priv->signals = addr;
+		ret = ioctl(priv->vbusfd, VBUS_KVM_SIGADDR_ASSIGN, &addr);
+
+		if (ret < 0)
+			perror("failed to assign signal address");
+	}
 }
 
 static int
-hc_generic(struct Priv *priv)
+vbus_pci_eventq_assign(struct Priv *priv, int idx,
+		       uint32_t count, uint64_t ringp, uint64_t datap)
 {
-	struct vbus_pci_hypercall *hc = &priv->registers.hypercall.data;
+	PCIDevice *dev = &priv->dev;
+	struct vbus_kvm_eventq_assign assign;
+	struct kvm_irq_routing_entry *irq;
+	unsigned int pos = dev->cap.start;
+	uint32_t addr;
+	uint16_t data;
+	int irqfd = 0, ioeventfd = 0;
 	int ret;
 
-	ret = ioctl(priv->vbusfd, VBUS_KVM_HYPERCALL, hc);
-	if (ret < 0)
-		return -errno;
+	irq = &priv->interrupts.irq[idx].routing;
+
+	addr = *(uint32_t *)&dev->config[pos + PCI_MSI_ADDRESS_LO];
+	data = *(uint16_t *)&dev->config[pos + PCI_MSI_DATA_32];
+	data += idx;
+
+	irq->u.msi.address_lo = addr;
+	irq->u.msi.address_hi = 0;
+	irq->u.msi.data       = data;
+
+	irq->type = KVM_IRQ_ROUTING_MSI;
+
+	ret = kvm_get_irq_route_gsi(kvm_context);
+	if (ret < 0) {
+		perror("vbus: kvm_get_irq_route_gsi");
+		return ret;
+	}
+
+	irq->gsi = ret;
+
+	ret = kvm_add_routing_entry(kvm_context, irq);
+	if (ret < 0) {
+		perror("vbus: kvm_add_routing_entry");
+		return ret;
+	}
+
+	ret = kvm_commit_irq_routes(kvm_context);
+	if (ret < 0) {
+		perror("vbus: kvm_commit_irq_routes");
+		return ret;
+	}
+
+	ret = kvm_irqfd(kvm_context, irq->gsi, 0);
+	if (ret < 0) {
+		perror("vbus: failed to create irqfd");
+		return ret;
+	}
+
+	irqfd = ret;
+
+	assign.flags = 0;
+	assign.queue = idx;
+	assign.fd    = irqfd;
+	assign.count = count;
+	assign.ring  = ringp;
+	assign.data  = datap;
+
+	ret = ioctl(priv->vbusfd, VBUS_KVM_EVENTQ_ASSIGN, &assign);
+	if (ret < 0) {
+		perror("vbus: failed to eventq-assign");
+		goto cleanup;
+	}
+
+	ioeventfd = ret;
+
+	ret = kvm_assign_ioeventfd(kvm_context,
+				   priv->signals,
+				   sizeof(__u32),
+				   ioeventfd, idx,
+				   IOEVENTFD_FLAG_DATAMATCH |
+				   IOEVENTFD_FLAG_PIO);
+	if (ret < 0) {
+		perror("vbus: failed to assign ioeventfd");
+		goto cleanup;
+	}
+
+	priv->interrupts.irq[idx].ioeventfd = ioeventfd;
+	priv->interrupts.irq[idx].irqfd     = irqfd;
+
+	return 0;
+
+cleanup:
+	if (irqfd)
+		close(irqfd);
+
+	if (ioeventfd)
+		close(ioeventfd);
 
 	return ret;
 }
 
 static int
-hc_devshm(struct Priv *priv)
+bridgecall_negotiate(struct Priv *priv)
 {
-	struct vbus_pci_hypercall *hc = &priv->registers.hypercall.data;
-	int ret;
-	int fd;
+	struct vbus_pci_call_desc *desc = &priv->registers.bridgecall;
+	struct vbus_pci_bridge_negotiate params;
 
-	fd = ioctl(priv->vbusfd, VBUS_KVM_HYPERCALL, hc);
-	if (fd < 0)
-		return -errno;
+	if (desc->len != sizeof(params))
+		return -EINVAL;
 
-	if (fd > 0) {
-		int handle = fd + EVENTQ_COUNT;
+	cpu_physical_memory_read(desc->datap, (void *)&params, sizeof(params));
 
-		ret = kvm_assign_ioeventfd(kvm_context,
-					   priv->pioaddr,
-					   sizeof(__u32),
-					   fd, handle,
-					   IOEVENTFD_FLAG_DATAMATCH |
-					   IOEVENTFD_FLAG_PIO);
-		if (ret < 0) {
-			printf("VBUS: could not register ioeventfd: %d\n",
-			       ret);
-			goto out;
-		}
-		
-		return handle;
-	}
+	if (params.magic != VBUS_PCI_ABI_MAGIC)
+		return -EINVAL;
+
+	if (params.version != priv->hcver)
+		return -EINVAL;
+
+	params.capabilities = 0;
+
+	cpu_physical_memory_write(desc->datap, (void *)&params, sizeof(params));
 
 	return 0;
+}
 
-out:
-	close(fd);
+static int
+bridgecall_qreg(struct Priv *priv)
+{
+	struct vbus_pci_call_desc *desc = &priv->registers.bridgecall;
+	struct vbus_pci_busreg params;
+	int i;
+	int ret;
+
+	if (desc->len != sizeof(params))
+		return -EINVAL;
+
+	cpu_physical_memory_read(desc->datap, (void *)&params, sizeof(params));
+
+	if (!priv->interrupts.enabled || params.count != priv->interrupts.count)
+		return -EINVAL;
+
+	for (i = 0; i < priv->interrupts.count; i++) {
+		struct vbus_pci_eventqreg *qreg = &params.eventq[i];
+
+		ret = vbus_pci_eventq_assign(priv, i,
+					     qreg->count, qreg->ring, qreg->data);
+		if (ret < 0)
+			return ret;
+	}
+
+	ioctl(priv->vbusfd, VBUS_KVM_READY, NULL);
+
+	return 0;
+}
+
+static int
+bridgecall_fwd_call(struct Priv *priv, int nr)
+{
+	struct vbus_pci_call_desc *desc = &priv->registers.bridgecall;
+	struct vbus_pci_call_desc params;
+	int ret;
+
+	if (desc->len != sizeof(params))
+		return -EINVAL;
+
+	cpu_physical_memory_read(desc->datap, (void *)&params, sizeof(params));
+
+	ret = ioctl(priv->vbusfd, nr, &params);
+	if (ret < 0)
+		return -errno;
+
 	return ret;
 }
 
@@ -140,24 +264,20 @@ static uint32_t
 vbus_pci_mmio_readl(void *opaque, target_phys_addr_t addr)
 {
 	struct Priv *priv = (struct Priv *)opaque;
-	uint32_t ret = 0;
+	struct vbus_pci_call_desc *desc = &priv->registers.bridgecall;
 
-	if (addr == REG_OFFSET_RESULT) {
-		struct vbus_pci_hypercall *hc;
-
-		hc = &priv->registers.hypercall.data;
-
-		switch (hc->vector) {
-		case VBUS_PCI_HC_DEVSHM:
-			ret = hc_devshm(priv);
-			break;
-		default:
-			ret = hc_generic(priv);
-			break;
-		}
+	switch (desc->vector) {
+	case VBUS_PCI_BRIDGE_NEGOTIATE:
+		return bridgecall_negotiate(priv);
+	case VBUS_PCI_BRIDGE_QREG:
+		return bridgecall_qreg(priv);
+	case VBUS_PCI_BRIDGE_SLOWCALL:
+		return bridgecall_fwd_call(priv, VBUS_KVM_SLOWCALL);
+	case VBUS_PCI_BRIDGE_FASTCALL_ADD:
+		return bridgecall_fwd_call(priv, VBUS_KVM_FCC_ASSIGN);
+	default:
+		return -EINVAL;
 	}
-
-        return ret;
 }
 
 static void
@@ -173,7 +293,7 @@ vbus_pci_mmio_writel(void *opaque, target_phys_addr_t addr, uint32_t value)
 
 	if (addr > sizeof(priv->registers) - sizeof(uint32_t))
 		return;
-	
+
 	memcpy(&buf[addr], &value, sizeof(value));
 }
 
@@ -207,24 +327,18 @@ vbus_pci_cap_init(PCIDevice *dev)
 static void
 vbus_pci_cap_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
 {
-	struct Priv *priv = to_priv(dev);
+	struct Priv       *priv = to_priv(dev);
 	unsigned int       pos = dev->cap.start;
 	unsigned int       ctrl = pos + PCI_MSI_FLAGS;
 
 	pci_default_cap_write_config(dev, addr, val, len);
-	
+
 	/* Check if this is not a write to the control register. */
 	if (!(addr <= ctrl && (addr + len) > ctrl))
 		return;
 
-	/*
-	 * We only get here if this is a write to the control register,
-	 * but we only emulate the PIO side-effects if this is the first
-	 * time we have seen an MSI_ENABLE operation.  I.e. all MSI_DISABLE
-	 * and subsequent MSI_ENABLE operations are ignored
-	 */ 
 	if (!priv->interrupts.enabled && val & 1) {
-		int i, total;
+		int total;
 		uint8_t flags = dev->config[pos+PCI_MSI_FLAGS];
 
 		total = 1 << ((flags & PCI_MSI_FLAGS_QSIZE) >> 4);
@@ -232,84 +346,7 @@ vbus_pci_cap_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
 		if (total > EVENTQ_COUNT)
 			total = EVENTQ_COUNT;
 
-		/* We need to register a GSI for each vector returned */
-		for (i = 0; i < total; i++) {
-			struct kvm_irq_routing_entry *irq;
-			uint32_t addr;
-			uint16_t data;
-			int irqfd = 0, ioeventfd = 0;
-			int ret;
-			struct vbus_kvm_eventq_assign assign;
-
-			irq = &priv->interrupts.irq[i].routing;
-
-			addr = *(uint32_t *)&dev->config[pos +
-							 PCI_MSI_ADDRESS_LO];
-
-			data = *(uint16_t *)&dev->config[pos + PCI_MSI_DATA_32];
-			data += i;
-
-			irq->u.msi.address_lo = addr;
-			irq->u.msi.address_hi = 0;
-			irq->u.msi.data       = data;
-
-			irq->type = KVM_IRQ_ROUTING_MSI;
-			
-			irq->gsi = kvm_get_irq_route_gsi(kvm_context);
-			if (irq->gsi < 0) {
-				perror("vbus: kvm_get_irq_route_gsi");
-				return;
-			}
-			
-			kvm_add_routing_entry(kvm_context, irq);
-			if (kvm_commit_irq_routes(kvm_context) < 0) {
-				perror("vbus: kvm_commit_irq_routes");
-				return;
-			}
-
-			irqfd = kvm_irqfd(kvm_context, irq->gsi, 0);
-			if (irqfd < 0) {
-				perror("vbus: failed to create irqfd");
-				return;
-			}
-
-			assign.queue = i;
-			assign.fd    = irqfd;
-
-			ioeventfd = ioctl(priv->vbusfd,
-					  VBUS_KVM_EVENTQ_ASSIGN,
-					  &assign);
-			if (ioeventfd < 0) {
-				perror("vbus: failed to eventq-assign");
-				goto cleanup;
-			}
-
-			ret = kvm_assign_ioeventfd(kvm_context,
-						   priv->pioaddr,
-						   sizeof(__u32),
-						   ioeventfd, i,
-						   IOEVENTFD_FLAG_DATAMATCH |
-						   IOEVENTFD_FLAG_PIO);
-			if (ret < 0) {
-				perror("vbus: failed to assign ioeventfd");
-				goto cleanup;
-			}
-
-			priv->interrupts.irq[i].ioeventfd = ioeventfd;
-			priv->interrupts.irq[i].irqfd     = irqfd;
-
-			continue;
-
-		cleanup:
-			if (irqfd)
-				close(irqfd);
-
-			if (ioeventfd)
-				close(ioeventfd);
-
-			return;
-		}
-
+		priv->interrupts.count   = total;
 		priv->interrupts.enabled = 1;
 	}
 }
@@ -325,8 +362,10 @@ pci_vbus_init(PCIBus *bus)
 	struct vbus_kvm_negotiate negotiate = {
 		.magic        = VBUS_KVM_ABI_MAGIC,
 		.version      = VBUS_KVM_ABI_VERSION,
-		.vmfd         = kvm_context->vm_fd,
 		.capabilities = 0, /* no advanced features (yet) */
+	};
+	struct vbus_kvm_open openargs = {
+		.vmfd         = kvm_context->vm_fd,
 	};
 
 	if (!kvm_check_extension(kvm_context, KVM_CAP_IRQFD)
@@ -366,16 +405,23 @@ pci_vbus_init(PCIBus *bus)
 	memset(&priv->mmio, 0, sizeof(priv->mmio));
 	memset(&priv->registers, 0, sizeof(priv->registers));
 
-	priv->pioaddr = 0;
+	priv->signals = 0;
 	priv->vbusfd = fd;
 	priv->mmio.key = cpu_register_io_memory(vbus_pci_read, vbus_pci_write,
 						priv);
 
-	pci_register_bar(dev, 0, 32, PCI_ADDRESS_SPACE_MEM,
-			 vbus_pci_mmio_map);
-	pci_register_bar(dev, 1, sizeof(uint32_t), PCI_ADDRESS_SPACE_IO,
-			 vbus_pci_pio_map);
+	ret = ioctl(fd, VBUS_KVM_OPEN, &openargs);
+	if (ret < 0) {
+		perror("vbus present but failed to open");
+		goto out;
+	}
 
+	priv->hcver = ret;
+
+	pci_register_bar(dev, 0, sizeof(struct vbus_pci_regs),
+			 PCI_ADDRESS_SPACE_MEM, vbus_pci_mmio_map);
+	pci_register_bar(dev, 1, sizeof(struct vbus_pci_signals),
+			 PCI_ADDRESS_SPACE_IO, vbus_pci_pio_map);
 
 	return;
 out:
