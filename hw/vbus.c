@@ -394,6 +394,8 @@ pci_vbus_init(PCIBus *bus)
 	pci_config_set_device_id(config, PCI_DEVICE_ID_VIRTUAL_BUS);
 	pci_config_set_class(config, PCI_CLASS_BRIDGE_OTHER);
 
+	config[0x08] = VBUS_PCI_ABI_VERSION;
+
 	pci_enable_capability_support(dev, 0,
 				      NULL,
 				      vbus_pci_cap_write_config,
