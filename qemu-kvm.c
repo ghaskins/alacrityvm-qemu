@@ -1494,10 +1494,10 @@ int kvm_assign_ioeventfd(kvm_context_t kvm, unsigned long addr, size_t len,
 	  KVM_IOEVENTFD_FLAG_DATAMATCH : 0;
 	data.flags |= type ? KVM_IOEVENTFD_FLAG_PIO : 0;
 
-	if (!kvm_check_extension(kvm, KVM_CAP_IOEVENTFD))
+	if (!kvm_check_extension(kvm_state, KVM_CAP_IOEVENTFD))
 		return -ENOENT;
 
-	r = ioctl(kvm->vm_fd, KVM_IOEVENTFD, &data);
+	r = ioctl(kvm_state->vmfd, KVM_IOEVENTFD, &data);
 	if (r == -1)
 		r = -errno;
 	return r;
@@ -1515,16 +1515,16 @@ int kvm_deassign_ioeventfd(kvm_context_t kvm, unsigned long addr, int fd,
 		(type ? KVM_IOEVENTFD_FLAG_PIO : 0),
 	};
 
-	if (!kvm_check_extension(kvm, KVM_CAP_IOEVENTFD))
+	if (!kvm_check_extension(kvm_state, KVM_CAP_IOEVENTFD))
 		return -ENOENT;
 
-	r = ioctl(kvm->vm_fd, KVM_IOEVENTFD, &data);
+	r = ioctl(kvm_state->vmfd, KVM_IOEVENTFD, &data);
 	if (r == -1)
 		r = -errno;
 	return r;
 }
 
-#else /* KVM_CAP_IOEVENTFD */
+#endif /* KVM_CAP_IOEVENTFD */
 
 static inline unsigned long kvm_get_thread_id(void)
 {

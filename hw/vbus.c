@@ -365,11 +365,11 @@ pci_vbus_init(PCIBus *bus)
 		.capabilities = 0, /* no advanced features (yet) */
 	};
 	struct vbus_kvm_open openargs = {
-		.vmfd         = kvm_context->vm_fd,
+		.vmfd         = kvm_state->vmfd,
 	};
 
-	if (!kvm_check_extension(kvm_context, KVM_CAP_IRQFD)
-	    || !kvm_check_extension(kvm_context, KVM_CAP_IOEVENTFD))
+	if (!kvm_check_extension(kvm_state, KVM_CAP_IRQFD)
+	    || !kvm_check_extension(kvm_state, KVM_CAP_IOEVENTFD))
 		return;
 
 	fd = open("/dev/vbus-kvm", 0);
