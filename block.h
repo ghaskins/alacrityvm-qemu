@@ -37,9 +37,9 @@ typedef struct QEMUSnapshotInfo {
                                      bdrv_file_open()) */
 #define BDRV_O_NOCACHE     0x0020 /* do not use the host page cache */
 #define BDRV_O_CACHE_WB    0x0040 /* use write-back caching */
-#define BDRV_O_CACHE_DEF   0x0080 /* use default caching */
+#define BDRV_O_NATIVE_AIO  0x0080 /* use native AIO instead of the thread pool */
 
-#define BDRV_O_CACHE_MASK  (BDRV_O_NOCACHE | BDRV_O_CACHE_WB | BDRV_O_CACHE_DEF)
+#define BDRV_O_CACHE_MASK  (BDRV_O_NOCACHE | BDRV_O_CACHE_WB)
 
 void bdrv_info(Monitor *mon);
 void bdrv_info_stats(Monitor *mon);
@@ -57,8 +57,6 @@ void bdrv_delete(BlockDriverState *bs);
 int bdrv_file_open(BlockDriverState **pbs, const char *filename, int flags);
 int bdrv_open(BlockDriverState *bs, const char *filename, int flags);
 int bdrv_open2(BlockDriverState *bs, const char *filename, int flags,
-               BlockDriver *drv);
-int bdrv_open3(BlockDriverState *bs, const char *filename, int flags,
                BlockDriver *drv);
 void bdrv_close(BlockDriverState *bs);
 int bdrv_check(BlockDriverState *bs);
@@ -87,7 +85,24 @@ BlockDriverAIOCB *bdrv_aio_readv(BlockDriverState *bs, int64_t sector_num,
 BlockDriverAIOCB *bdrv_aio_writev(BlockDriverState *bs, int64_t sector_num,
                                   QEMUIOVector *iov, int nb_sectors,
                                   BlockDriverCompletionFunc *cb, void *opaque);
+BlockDriverAIOCB *bdrv_aio_flush(BlockDriverState *bs,
+				 BlockDriverCompletionFunc *cb, void *opaque);
 void bdrv_aio_cancel(BlockDriverAIOCB *acb);
+
+typedef struct BlockRequest {
+    /* Fields to be filled by multiwrite caller */
+    int64_t sector;
+    int nb_sectors;
+    QEMUIOVector *qiov;
+    BlockDriverCompletionFunc *cb;
+    void *opaque;
+
+    /* Filled by multiwrite implementation */
+    int error;
+} BlockRequest;
+
+int bdrv_aio_multiwrite(BlockDriverState *bs, BlockRequest *reqs,
+    int num_reqs);
 
 /* sg packet commands */
 int bdrv_ioctl(BlockDriverState *bs, unsigned long int req, void *buf);
@@ -122,6 +137,7 @@ int bdrv_get_translation_hint(BlockDriverState *bs);
 int bdrv_is_removable(BlockDriverState *bs);
 int bdrv_is_read_only(BlockDriverState *bs);
 int bdrv_is_sg(BlockDriverState *bs);
+int bdrv_enable_write_cache(BlockDriverState *bs);
 int bdrv_is_inserted(BlockDriverState *bs);
 int bdrv_media_changed(BlockDriverState *bs);
 int bdrv_is_locked(BlockDriverState *bs);
@@ -162,9 +178,10 @@ void path_combine(char *dest, int dest_size,
                   const char *base_path,
                   const char *filename);
 
-int bdrv_put_buffer(BlockDriverState *bs, const uint8_t *buf,
-                    int64_t pos, int size);
+int bdrv_save_vmstate(BlockDriverState *bs, const uint8_t *buf,
+                      int64_t pos, int size);
 
-int bdrv_get_buffer(BlockDriverState *bs, uint8_t *buf, int64_t pos, int size);
+int bdrv_load_vmstate(BlockDriverState *bs, uint8_t *buf,
+                      int64_t pos, int size);
 
 #endif

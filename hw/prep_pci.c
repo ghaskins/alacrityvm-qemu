@@ -107,13 +107,13 @@ static uint32_t PPC_PCIIO_readl (void *opaque, target_phys_addr_t addr)
     return val;
 }
 
-static CPUWriteMemoryFunc *PPC_PCIIO_write[] = {
+static CPUWriteMemoryFunc * const PPC_PCIIO_write[] = {
     &PPC_PCIIO_writeb,
     &PPC_PCIIO_writew,
     &PPC_PCIIO_writel,
 };
 
-static CPUReadMemoryFunc *PPC_PCIIO_read[] = {
+static CPUReadMemoryFunc * const PPC_PCIIO_read[] = {
     &PPC_PCIIO_readb,
     &PPC_PCIIO_readw,
     &PPC_PCIIO_readl,
@@ -124,8 +124,10 @@ static int prep_map_irq(PCIDevice *pci_dev, int irq_num)
     return (irq_num + (pci_dev->devfn >> 3)) & 1;
 }
 
-static void prep_set_irq(qemu_irq *pic, int irq_num, int level)
+static void prep_set_irq(void *opaque, int irq_num, int level)
 {
+    qemu_irq *pic = opaque;
+
     qemu_set_irq(pic[(irq_num & 1) ? 11 : 9] , level);
 }
 

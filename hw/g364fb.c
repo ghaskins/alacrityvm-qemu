@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ * with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "hw.h"
@@ -269,7 +268,7 @@ static void g364fb_update_display(void *opaque)
     qemu_irq_raise(s->irq);
 }
 
-static void inline g364fb_invalidate_display(void *opaque)
+static inline void g364fb_invalidate_display(void *opaque)
 {
     G364State *s = opaque;
     int i;
@@ -397,7 +396,7 @@ static uint32_t g364fb_ctrl_readb(void *opaque, target_phys_addr_t addr)
 
 static void g364fb_update_depth(G364State *s)
 {
-    const static int depths[8] = { 1, 2, 4, 8, 15, 16, 0 };
+    static const int depths[8] = { 1, 2, 4, 8, 15, 16, 0 };
     s->depth = depths[(s->ctla & 0x00700000) >> 20];
 }
 
@@ -523,13 +522,13 @@ static void g364fb_ctrl_writeb(void *opaque, target_phys_addr_t addr, uint32_t v
     g364fb_ctrl_writel(opaque, addr & ~0x3, val);
 }
 
-static CPUReadMemoryFunc *g364fb_ctrl_read[3] = {
+static CPUReadMemoryFunc * const g364fb_ctrl_read[3] = {
     g364fb_ctrl_readb,
     g364fb_ctrl_readw,
     g364fb_ctrl_readl,
 };
 
-static CPUWriteMemoryFunc *g364fb_ctrl_write[3] = {
+static CPUWriteMemoryFunc * const g364fb_ctrl_write[3] = {
     g364fb_ctrl_writeb,
     g364fb_ctrl_writew,
     g364fb_ctrl_writel,

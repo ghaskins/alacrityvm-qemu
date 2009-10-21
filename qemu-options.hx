@@ -39,12 +39,23 @@ Select CPU model (-cpu ? for list and additional feature selection)
 ETEXI
 
 DEF("smp", HAS_ARG, QEMU_OPTION_smp,
-    "-smp n          set the number of CPUs to 'n' [default=1]\n")
+    "-smp n[,maxcpus=cpus][,cores=cores][,threads=threads][,sockets=sockets]\n"
+    "                set the number of CPUs to 'n' [default=1]\n"
+    "                maxcpus= maximum number of total cpus, including\n"
+    "                  offline CPUs for hotplug etc.\n"
+    "                cores= number of CPU cores on one socket\n"
+    "                threads= number of threads on one CPU core\n"
+    "                sockets= number of discrete sockets in the system\n")
 STEXI
-@item -smp @var{n}
+@item -smp @var{n}[,cores=@var{cores}][,threads=@var{threads}][,sockets=@var{sockets}][,maxcpus=@var{maxcpus}]
 Simulate an SMP system with @var{n} CPUs. On the PC target, up to 255
 CPUs are supported. On Sparc32 target, Linux limits the number of usable CPUs
 to 4.
+For the PC target, the number of @var{cores} per socket, the number
+of @var{threads} per cores and the total number of @var{sockets} can be
+specified. Missing values will be computed. If any on the three values is
+given, the total number of CPUs @var{n} can be omitted. @var{maxcpus}
+specifies the maximum number of hotpluggable CPUs.
 ETEXI
 
 DEF("numa", HAS_ARG, QEMU_OPTION_numa,
@@ -92,15 +103,19 @@ DEF("drive", HAS_ARG, QEMU_OPTION_drive,
     "-drive [file=file][,if=type][,bus=n][,unit=m][,media=d][,index=i]\n"
     "       [,cyls=c,heads=h,secs=s[,trans=t]][,snapshot=on|off]\n"
     "       [,cache=writethrough|writeback|none][,format=f][,serial=s]\n"
-    "       [,addr=A]\n"
+    "       [,addr=A][,id=name][,aio=threads|native]\n"
     "       [,boot=on|off]\n"
     "                use 'file' as a drive image\n")
+DEF("set", HAS_ARG, QEMU_OPTION_set,
+    "-set group.id.arg=value\n"
+    "                set <arg> parameter for item <id> of type <group>\n"
+    "                i.e. -set drive.$id.file=/path/to/image\n")
 STEXI
 @item -drive @var{option}[,@var{option}[,@var{option}[,...]]]
 
 Define a new drive. Valid options are:
 
-@table @code
+@table @option
 @item file=@var{file}
 This option defines which disk image (@pxref{disk_images}) to use with
 this drive. If the filename contains comma, you must double it
@@ -122,6 +137,8 @@ These options have the same definition as they have in @option{-hdachs}.
 @var{snapshot} is "on" or "off" and allows to enable snapshot for given drive (see @option{-snapshot}).
 @item cache=@var{cache}
 @var{cache} is "none", "writeback", or "writethrough" and controls how the host cache is used to access block data.
+@item aio=@var{aio}
+@var{aio} is "threads", or "native" and selects between pthread based disk I/O and native Linux AIO.
 @item format=@var{format}
 Specify which disk @var{format} will be used rather than detecting
 the format.  Can be used to specifiy format=raw to avoid interpreting
@@ -149,9 +166,7 @@ an internal copy of the data.
 
 Some block drivers perform badly with @option{cache=writethrough}, most notably,
 qcow2.  If performance is more important than correctness,
-@option{cache=writeback} should be used with qcow2.  By default, if no explicit
-caching is specified for a qcow2 disk image, @option{cache=writeback} will be
-used.  For all other disk types, @option{cache=writethrough} is the default.
+@option{cache=writeback} should be used with qcow2.
 
 Instead of @option{-cdrom} you can use:
 @example
@@ -203,30 +218,49 @@ DEF("mtdblock", HAS_ARG, QEMU_OPTION_mtdblock,
     "-mtdblock file  use 'file' as on-board Flash memory image\n")
 STEXI
 
-@item -mtdblock file
-Use 'file' as on-board Flash memory image.
+@item -mtdblock @var{file}
+Use @var{file} as on-board Flash memory image.
 ETEXI
 
 DEF("sd", HAS_ARG, QEMU_OPTION_sd,
     "-sd file        use 'file' as SecureDigital card image\n")
 STEXI
-@item -sd file
-Use 'file' as SecureDigital card image.
+@item -sd @var{file}
+Use @var{file} as SecureDigital card image.
 ETEXI
 
 DEF("pflash", HAS_ARG, QEMU_OPTION_pflash,
     "-pflash file    use 'file' as a parallel flash image\n")
 STEXI
-@item -pflash file
-Use 'file' as a parallel flash image.
+@item -pflash @var{file}
+Use @var{file} as a parallel flash image.
 ETEXI
 
 DEF("boot", HAS_ARG, QEMU_OPTION_boot,
-    "-boot [a|c|d|n] boot on floppy (a), hard disk (c), CD-ROM (d), or network (n)\n")
+    "-boot [order=drives][,once=drives][,menu=on|off]\n"
+    "                'drives': floppy (a), hard disk (c), CD-ROM (d), network (n)\n")
 STEXI
-@item -boot [a|c|d|n]
-Boot on floppy (a), hard disk (c), CD-ROM (d), or Etherboot (n). Hard disk boot
-is the default.
+@item -boot [order=@var{drives}][,once=@var{drives}][,menu=on|off]
+
+Specify boot order @var{drives} as a string of drive letters. Valid
+drive letters depend on the target achitecture. The x86 PC uses: a, b
+(floppy 1 and 2), c (first hard disk), d (first CD-ROM), n-p (Etherboot
+from network adapter 1-4), hard disk boot is the default. To apply a
+particular boot order only on the first startup, specify it via
+@option{once}.
+
+Interactive boot menus/prompts can be enabled via @option{menu=on} as far
+as firmware/BIOS supports them. The default is non-interactive boot.
+
+@example
+# try to boot from network first, then from hard disk
+qemu -boot order=nc
+# boot from CD-ROM first, switch back to default order after reboot
+qemu -boot once=d
+@end example
+
+Note: The legacy format '-boot @var{drives}' is still supported but its
+use is discouraged as it may be removed from future versions.
 ETEXI
 
 DEF("snapshot", 0, QEMU_OPTION_snapshot,
@@ -330,7 +364,7 @@ STEXI
 @item -usbdevice @var{devname}
 Add the USB device @var{devname}. @xref{usb_devices}.
 
-@table @code
+@table @option
 
 @item mouse
 Virtual Mouse. This will override the PS/2 mouse emulation when activated.
@@ -340,16 +374,17 @@ Pointer device that uses absolute coordinates (like a touchscreen). This
 means qemu is able to report the mouse position without having to grab the
 mouse. Also overrides the PS/2 mouse emulation when activated.
 
-@item disk:[format=@var{format}]:file
+@item disk:[format=@var{format}]:@var{file}
 Mass storage device based on file. The optional @var{format} argument
 will be used rather than detecting the format. Can be used to specifiy
-format=raw to avoid interpreting an untrusted format header.
+@code{format=raw} to avoid interpreting an untrusted format header.
 
-@item host:bus.addr
-Pass through the host device identified by bus.addr (Linux only).
+@item host:@var{bus}.@var{addr}
+Pass through the host device identified by @var{bus}.@var{addr} (Linux only).
 
-@item host:vendor_id:product_id
-Pass through the host device identified by vendor_id:product_id (Linux only).
+@item host:@var{vendor_id}:@var{product_id}
+Pass through the host device identified by @var{vendor_id}:@var{product_id}
+(Linux only).
 
 @item serial:[vendorid=@var{vendor_id}][,productid=@var{product_id}]:@var{dev}
 Serial converter to host character device @var{dev}, see @code{-serial} for the
@@ -359,19 +394,23 @@ available devices.
 Braille device.  This will use BrlAPI to display the braille output on a real
 or fake device.
 
-@item net:options
+@item net:@var{options}
 Network adapter that supports CDC ethernet and RNDIS protocols.
 
 @end table
 ETEXI
 
+DEF("device", HAS_ARG, QEMU_OPTION_device,
+    "-device driver[,options]  add device\n")
 DEF("name", HAS_ARG, QEMU_OPTION_name,
-    "-name string    set the name of the guest\n")
+    "-name string1[,process=string2]    set the name of the guest\n"
+    "            string1 sets the window title and string2 the process name (on Linux)\n")
 STEXI
 @item -name @var{name}
 Sets the @var{name} of the guest.
 This name will be displayed in the SDL window caption.
 The @var{name} will also be used for the VNC server.
+Also optionally set the top visible process name in Linux.
 ETEXI
 
 DEF("uuid", HAS_ARG, QEMU_OPTION_uuid,
@@ -441,6 +480,16 @@ Use Ctrl-Alt-Shift to grab mouse (instead of Ctrl-Alt).
 ETEXI
 
 #ifdef CONFIG_SDL
+DEF("ctrl-grab", 0, QEMU_OPTION_ctrl_grab,
+    "-ctrl-grab       use Right-Ctrl to grab mouse (instead of Ctrl-Alt)\n")
+#endif
+STEXI
+@item -ctrl-grab
+
+Use Right-Ctrl to grab mouse (instead of Ctrl-Alt).
+ETEXI
+
+#ifdef CONFIG_SDL
 DEF("no-quit", 0, QEMU_OPTION_no_quit,
     "-no-quit        disable SDL window close capability\n")
 #endif
@@ -474,7 +523,7 @@ DEF("vga", HAS_ARG, QEMU_OPTION_vga,
 STEXI
 @item -vga @var{type}
 Select type of VGA card to emulate. Valid values for @var{type} are
-@table @code
+@table @option
 @item cirrus
 Cirrus Logic GD5446 Video card. All Windows versions starting from
 Windows 95 should recognize and use this graphic card. For optimal
@@ -521,7 +570,7 @@ tablet}). When using the VNC display, you must use the @option{-k}
 parameter to set the keyboard layout if you are not using en-us. Valid
 syntax for the @var{display} is
 
-@table @code
+@table @option
 
 @item @var{host}:@var{d}
 
@@ -529,7 +578,7 @@ TCP connections will only be allowed from @var{host} on display @var{d}.
 By convention the TCP port is 5900+@var{d}. Optionally, @var{host} can
 be omitted in which case the server will accept connections from any host.
 
-@item @code{unix}:@var{path}
+@item unix:@var{path}
 
 Connections will be allowed over UNIX domain sockets where @var{path} is the
 location of a unix socket to listen for connections on.
@@ -544,7 +593,7 @@ can be used to later start the VNC server.
 Following the @var{display} value there may be one or more @var{option} flags
 separated by commas. Valid options are
 
-@table @code
+@table @option
 
 @item reverse
 
@@ -564,7 +613,7 @@ The password must be set separately using the @code{change} command in the
 Require that client use TLS when communicating with the VNC server. This
 uses anonymous TLS credentials so is susceptible to a man-in-the-middle
 attack. It is recommended that this option be combined with either the
-@var{x509} or @var{x509verify} options.
+@option{x509} or @option{x509verify} options.
 
 @item x509=@var{/path/to/certificate/dir}
 
@@ -644,15 +693,9 @@ slows down the IDE transfers).
 ETEXI
 
 #ifdef TARGET_I386
-DEF("rtc-td-hack", 0, QEMU_OPTION_rtc_td_hack,
-    "-rtc-td-hack    use it to fix time drift in Windows ACPI HAL\n")
+HXCOMM Deprecated by -rtc
+DEF("rtc-td-hack", 0, QEMU_OPTION_rtc_td_hack, "")
 #endif
-STEXI
-@item -rtc-td-hack
-Use it if you experience time drift problem in Windows with ACPI HAL.
-This option will try to figure out how many timer interrupts were not
-processed by the Windows guest and will re-inject them.
-ETEXI
 
 #ifdef TARGET_I386
 DEF("no-fd-bootchk", 0, QEMU_OPTION_no_fd_bootchk,
@@ -779,7 +822,8 @@ DEF("net", HAS_ARG, QEMU_OPTION_net,
     "                use '[down]script=no' to disable script execution;\n"
     "                use 'fd=h' to connect to an already opened TAP interface\n"
 #ifdef TUNSETSNDBUF
-    "                use 'sndbuf=nbytes' to limit the size of the send buffer\n"
+    "                use 'sndbuf=nbytes' to limit the size of the send buffer; the\n"
+    "                default of 'sndbuf=1048576' can be disabled using 'sndbuf=0'\n"
 #endif
 #endif
     "-net socket[,vlan=n][,name=str][,fd=h][,listen=[host]:port][,connect=host:port]\n"
@@ -797,10 +841,20 @@ DEF("net", HAS_ARG, QEMU_OPTION_net,
     "                dump traffic on vlan 'n' to file 'f' (max n bytes per packet)\n"
     "-net none       use it alone to have zero network devices; if no -net option\n"
     "                is provided, the default is '-net nic -net user'\n")
+DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
+    "-netdev ["
+#ifdef CONFIG_SLIRP
+    "user|"
+#endif
+    "tap|"
+#ifdef CONFIG_VDE
+    "vde|"
+#endif
+    "socket],id=str[,option][,option][,...]\n")
 STEXI
 @item -net nic[,vlan=@var{n}][,macaddr=@var{mac}][,model=@var{type}][,name=@var{name}][,addr=@var{addr}][,vectors=@var{v}]
 Create a new Network Interface Card and connect it to VLAN @var{n} (@var{n}
-= 0 is the default). The NIC is an ne2k_pci by default on the PC
+= 0 is the default). The NIC is an e1000 by default on the PC
 target. Optionally, the MAC address can be changed to @var{mac}, the
 device address set to @var{addr} (PCI cards only),
 and a @var{name} can be assigned for use in monitor commands.
@@ -819,7 +873,7 @@ for a list of available devices for your target.
 Use the user mode network stack which requires no administrator
 privilege to run. Valid options are:
 
-@table @code
+@table @option
 @item vlan=@var{n}
 Connect user mode stack to VLAN @var{n} (@var{n} = 0 is the default).
 
@@ -1063,7 +1117,7 @@ machines have none.
 @anchor{bt-hcis}
 The following three types are recognized:
 
-@table @code
+@table @option
 @item -bt hci,null
 (default) The corresponding Bluetooth HCI assumes no internal logic
 and will not respond to any HCI commands or emit events.
@@ -1097,7 +1151,7 @@ Emulate a bluetooth device @var{dev} and place it in network @var{n}
 (default @code{0}).  QEMU can only emulate one type of bluetooth devices
 currently:
 
-@table @code
+@table @option
 @item keyboard
 Virtual wireless keyboard implementing the HIDP bluetooth profile.
 @end table
@@ -1157,6 +1211,8 @@ STEXI
 @table @option
 ETEXI
 
+DEF("chardev", HAS_ARG, QEMU_OPTION_chardev, \
+    "-chardev spec   create unconnected chardev\n")
 DEF("serial", HAS_ARG, QEMU_OPTION_serial, \
     "-serial dev     redirect the serial port to char device 'dev'\n")
 STEXI
@@ -1171,8 +1227,8 @@ ports.
 Use @code{-serial none} to disable all serial ports.
 
 Available character devices are:
-@table @code
-@item vc[:WxH]
+@table @option
+@item vc[:@var{W}x@var{H}]
 Virtual console. Optionally, a width and height can be given in pixel with
 @example
 vc:800x600
@@ -1206,8 +1262,6 @@ This implements UDP Net Console.
 When @var{remote_host} or @var{src_ip} are not specified
 they default to @code{0.0.0.0}.
 When not using a specified @var{src_port} a random port is automatically chosen.
-@item msmouse
-Three button serial mouse. Configure the guest to use Microsoft protocol.
 
 If you just want a simple readonly console you can use @code{netcat} or
 @code{nc}, by starting qemu with: @code{-serial udp::4555} and nc as:
@@ -1281,6 +1335,8 @@ listening on port 4444 would be:
 Braille device.  This will use BrlAPI to display the braille output on a real
 or fake device.
 
+@item msmouse
+Three button serial mouse. Configure the guest to use Microsoft protocol.
 @end table
 ETEXI
 
@@ -1386,25 +1442,6 @@ STEXI
 Set the filename for the BIOS.
 ETEXI
 
-#ifdef CONFIG_KQEMU
-DEF("kernel-kqemu", 0, QEMU_OPTION_kernel_kqemu, \
-    "-kernel-kqemu   enable KQEMU full virtualization (default is user mode only)\n")
-#endif
-STEXI
-@item -kernel-kqemu
-Enable KQEMU full virtualization (default is user mode only).
-ETEXI
-
-#ifdef CONFIG_KQEMU
-DEF("no-kqemu", 0, QEMU_OPTION_no_kqemu, \
-    "-no-kqemu       disable KQEMU kernel module usage\n")
-#endif
-STEXI
-@item -no-kqemu
-Disable KQEMU kernel module usage. KQEMU options are only available if
-KQEMU support is enabled when compiling.
-ETEXI
-
 #ifdef CONFIG_KVM
 DEF("enable-kvm", 0, QEMU_OPTION_enable_kvm, \
     "-enable-kvm     enable KVM full virtualization support\n")
@@ -1479,23 +1516,38 @@ Force the use of the given methods for timer alarm. To see what timers
 are available use -clock ?.
 ETEXI
 
-DEF("localtime", 0, QEMU_OPTION_localtime, \
-    "-localtime      set the real time clock to local time [default=utc]\n")
-STEXI
-@item -localtime
-Set the real time clock to local time (the default is to UTC
-time). This option is needed to have correct date in MS-DOS or
-Windows.
-ETEXI
+HXCOMM Options deprecated by -rtc
+DEF("localtime", 0, QEMU_OPTION_localtime, "")
+DEF("startdate", HAS_ARG, QEMU_OPTION_startdate, "")
 
-DEF("startdate", HAS_ARG, QEMU_OPTION_startdate, \
-    "-startdate      select initial date of the clock\n")
+#ifdef TARGET_I386
+DEF("rtc", HAS_ARG, QEMU_OPTION_rtc, \
+    "-rtc [base=utc|localtime|date][,clock=host|vm][,driftfix=none|slew]\n" \
+    "                set the RTC base and clock, enable drift fix for clock ticks\n")
+#else
+DEF("rtc", HAS_ARG, QEMU_OPTION_rtc, \
+    "-rtc [base=utc|localtime|date][,clock=host|vm]\n" \
+    "                set the RTC base and clock\n")
+#endif
+
 STEXI
 
-@item -startdate @var{date}
-Set the initial date of the real time clock. Valid formats for
-@var{date} are: @code{now} or @code{2006-06-17T16:01:21} or
-@code{2006-06-17}. The default value is @code{now}.
+@item -rtc [base=utc|localtime|@var{date}][,clock=host|vm][,driftfix=none|slew]
+Specify @option{base} as @code{utc} or @code{localtime} to let the RTC start at the current
+UTC or local time, respectively. @code{localtime} is required for correct date in
+MS-DOS or Windows. To start at a specific point in time, provide @var{date} in the
+format @code{2006-06-17T16:01:21} or @code{2006-06-17}. The default base is UTC.
+
+By default the RTC is driven by the host system time. This allows to use the
+RTC as accurate reference clock inside the guest, specifically if the host
+time is smoothly following an accurate external reference clock, e.g. via NTP.
+If you want to isolate the guest time from the host, even prevent it from
+progressing during suspension, you can set @option{clock} to @code{vm} instead.
+
+Enable @option{driftfix} (i386 targets only) if you experience time drift problems,
+specifically with Windows' ACPI HAL. This option will try to figure out how
+many timer interrupts were not processed by the Windows guest and will
+re-inject them.
 ETEXI
 
 DEF("icount", HAS_ARG, QEMU_OPTION_icount, \
@@ -1503,9 +1555,9 @@ DEF("icount", HAS_ARG, QEMU_OPTION_icount, \
     "                enable virtual instruction counter with 2^N clock ticks per\n" \
     "                instruction\n")
 STEXI
-@item -icount [N|auto]
+@item -icount [@var{N}|auto]
 Enable virtual instruction counter.  The virtual cpu will execute one
-instruction every 2^N ns of virtual time.  If @code{auto} is specified
+instruction every 2^@var{N} ns of virtual time.  If @code{auto} is specified
 then the virtual cpu speed will be automatically adjusted to keep virtual
 time within a few seconds of real time.
 
@@ -1568,7 +1620,7 @@ DEF("echr", HAS_ARG, QEMU_OPTION_echr, \
     "-echr chr       set terminal escape character instead of ctrl-a\n")
 STEXI
 
-@item -echr numeric_ascii_value
+@item -echr @var{numeric_ascii_value}
 Change the escape character used for switching to the monitor when using
 monitor and serial sharing.  The default is @code{0x01} when using the
 @code{-nographic} option.  @code{0x01} is equal to pressing
@@ -1610,7 +1662,7 @@ DEF("chroot", HAS_ARG, QEMU_OPTION_chroot, \
     "-chroot dir     Chroot to dir just before starting the VM.\n")
 #endif
 STEXI
-@item -chroot dir
+@item -chroot @var{dir}
 Immediately before starting guest execution, chroot to the specified
 directory.  Especially useful in combination with -runas.
 ETEXI
@@ -1620,7 +1672,7 @@ DEF("runas", HAS_ARG, QEMU_OPTION_runas, \
     "-runas user     Change to user id user just before starting the VM.\n")
 #endif
 STEXI
-@item -runas user
+@item -runas @var{user}
 Immediately before starting guest execution, drop root privileges, switching
 to the specified user.
 ETEXI

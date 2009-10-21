@@ -680,13 +680,13 @@ static ssize_t smc91c111_receive(VLANClientState *vc, const uint8_t *buf, size_t
     return size;
 }
 
-static CPUReadMemoryFunc *smc91c111_readfn[] = {
+static CPUReadMemoryFunc * const smc91c111_readfn[] = {
     smc91c111_readb,
     smc91c111_readw,
     smc91c111_readl
 };
 
-static CPUWriteMemoryFunc *smc91c111_writefn[] = {
+static CPUWriteMemoryFunc * const smc91c111_writefn[] = {
     smc91c111_writeb,
     smc91c111_writew,
     smc91c111_writel
@@ -700,7 +700,7 @@ static void smc91c111_cleanup(VLANClientState *vc)
     qemu_free(s);
 }
 
-static void smc91c111_init1(SysBusDevice *dev)
+static int smc91c111_init1(SysBusDevice *dev)
 {
     smc91c111_state *s = FROM_SYSBUS(smc91c111_state, dev);
 
@@ -717,6 +717,7 @@ static void smc91c111_init1(SysBusDevice *dev)
                                  smc91c111_cleanup, s);
     qemu_format_nic_info_str(s->vc, s->macaddr);
     /* ??? Save/restore.  */
+    return 0;
 }
 
 static void smc91c111_register_devices(void)
@@ -733,8 +734,8 @@ void smc91c111_init(NICInfo *nd, uint32_t base, qemu_irq irq)
 
     qemu_check_nic_model(nd, "smc91c111");
     dev = qdev_create(NULL, "smc91c111");
-    qdev_set_netdev(dev, nd);
-    qdev_init(dev);
+    dev->nd = nd;
+    qdev_init_nofail(dev);
     s = sysbus_from_qdev(dev);
     sysbus_mmio_map(s, 0, base);
     sysbus_connect_irq(s, 0, irq);

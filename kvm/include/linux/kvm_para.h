@@ -1,43 +1,3 @@
-#ifndef KVM_UNIFDEF_H
-#define KVM_UNIFDEF_H
-
-#ifdef __i386__
-#ifndef CONFIG_X86_32
-#define CONFIG_X86_32 1
-#endif
-#endif
-
-#ifdef __x86_64__
-#ifndef CONFIG_X86_64
-#define CONFIG_X86_64 1
-#endif
-#endif
-
-#if defined(__i386__) || defined (__x86_64__)
-#ifndef CONFIG_X86
-#define CONFIG_X86 1
-#endif
-#endif
-
-#ifdef __ia64__
-#ifndef CONFIG_IA64
-#define CONFIG_IA64 1
-#endif
-#endif
-
-#ifdef __PPC__
-#ifndef CONFIG_PPC
-#define CONFIG_PPC 1
-#endif
-#endif
-
-#ifdef __s390__
-#ifndef CONFIG_S390
-#define CONFIG_S390 1
-#endif
-#endif
-
-#endif
 #ifndef __LINUX_KVM_PARA_H
 #define __LINUX_KVM_PARA_H
 
@@ -53,6 +13,7 @@
 #define KVM_ENOSYS		1000
 #define KVM_EFAULT		EFAULT
 #define KVM_E2BIG		E2BIG
+#define KVM_EPERM		EPERM
 
 #define KVM_HC_VAPIC_POLL_IRQ		1
 #define KVM_HC_MMU_OP			2

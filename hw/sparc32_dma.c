@@ -21,9 +21,11 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "hw.h"
 #include "sparc32_dma.h"
 #include "sun4m.h"
+#include "sysbus.h"
 
 /* debug DMA */
 //#define DEBUG_DMA
@@ -60,6 +62,7 @@
 typedef struct DMAState DMAState;
 
 struct DMAState {
+    SysBusDevice busdev;
     uint32_t dmaregs[DMA_REGS];
     qemu_irq irq;
     void *iommu;
@@ -199,13 +202,13 @@ static void dma_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
     s->dmaregs[saddr] = val;
 }
 
-static CPUReadMemoryFunc *dma_mem_read[3] = {
+static CPUReadMemoryFunc * const dma_mem_read[3] = {
     NULL,
     NULL,
     dma_mem_readl,
 };
 
-static CPUWriteMemoryFunc *dma_mem_write[3] = {
+static CPUWriteMemoryFunc * const dma_mem_write[3] = {
     NULL,
     NULL,
     dma_mem_writel,
@@ -219,47 +222,48 @@ static void dma_reset(void *opaque)
     s->dmaregs[0] = DMA_VER;
 }
 
-static void dma_save(QEMUFile *f, void *opaque)
+static const VMStateDescription vmstate_dma = {
+    .name ="sparc32_dma",
+    .version_id = 2,
+    .minimum_version_id = 2,
+    .minimum_version_id_old = 2,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT32_ARRAY(dmaregs, DMAState, DMA_REGS),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static int sparc32_dma_init1(SysBusDevice *dev)
 {
-    DMAState *s = opaque;
-    unsigned int i;
+    DMAState *s = FROM_SYSBUS(DMAState, dev);
+    int dma_io_memory;
 
-    for (i = 0; i < DMA_REGS; i++)
-        qemu_put_be32s(f, &s->dmaregs[i]);
-}
+    sysbus_init_irq(dev, &s->irq);
 
-static int dma_load(QEMUFile *f, void *opaque, int version_id)
-{
-    DMAState *s = opaque;
-    unsigned int i;
+    dma_io_memory = cpu_register_io_memory(dma_mem_read, dma_mem_write, s);
+    sysbus_init_mmio(dev, DMA_SIZE, dma_io_memory);
 
-    if (version_id != 2)
-        return -EINVAL;
-    for (i = 0; i < DMA_REGS; i++)
-        qemu_get_be32s(f, &s->dmaregs[i]);
+    vmstate_register(-1, &vmstate_dma, s);
+    qemu_register_reset(dma_reset, s);
 
+    qdev_init_gpio_in(&dev->qdev, dma_set_irq, 1);
+    qdev_init_gpio_out(&dev->qdev, &s->dev_reset, 1);
     return 0;
 }
 
-void *sparc32_dma_init(target_phys_addr_t daddr, qemu_irq parent_irq,
-                       void *iommu, qemu_irq **dev_irq, qemu_irq **reset)
+static SysBusDeviceInfo sparc32_dma_info = {
+    .init = sparc32_dma_init1,
+    .qdev.name  = "sparc32_dma",
+    .qdev.size  = sizeof(DMAState),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_PTR("iommu_opaque", DMAState, iommu),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
+
+static void sparc32_dma_register_devices(void)
 {
-    DMAState *s;
-    int dma_io_memory;
-
-    s = qemu_mallocz(sizeof(DMAState));
-
-    s->irq = parent_irq;
-    s->iommu = iommu;
-
-    dma_io_memory = cpu_register_io_memory(dma_mem_read, dma_mem_write, s);
-    cpu_register_physical_memory(daddr, DMA_SIZE, dma_io_memory);
-
-    register_savevm("sparc32_dma", daddr, 2, dma_save, dma_load, s);
-    qemu_register_reset(dma_reset, s);
-    *dev_irq = qemu_allocate_irqs(dma_set_irq, s, 1);
-
-    *reset = &s->dev_reset;
-
-    return s;
+    sysbus_register_withprop(&sparc32_dma_info);
 }
+
+device_init(sparc32_dma_register_devices)

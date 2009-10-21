@@ -15,8 +15,7 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA  02110-1301 USA
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef CONFIG_USER_ONLY
@@ -346,7 +345,7 @@ int cris_mmu_translate(struct cris_mmu_result *res,
 	}
 
 	seg = vaddr >> 28;
-	if (cris_mmu_segmented_addr(seg, env->sregs[SFR_RW_MM_CFG]))
+	if (!is_user && cris_mmu_segmented_addr(seg, env->sregs[SFR_RW_MM_CFG]))
 	{
 		uint32_t base;
 

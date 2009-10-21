@@ -61,7 +61,8 @@ struct timerblock
 {
     SysBusDevice busdev;
     qemu_irq irq;
-    unsigned int nr_timers;
+    uint32_t nr_timers;
+    uint32_t freq_hz;
     struct xlx_timer *timers;
 };
 
@@ -166,12 +167,12 @@ timer_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
     timer_update_irq(t);
 }
 
-static CPUReadMemoryFunc *timer_read[] = {
+static CPUReadMemoryFunc * const timer_read[] = {
     NULL, NULL,
     &timer_readl,
 };
 
-static CPUWriteMemoryFunc *timer_write[] = {
+static CPUWriteMemoryFunc * const timer_write[] = {
     NULL, NULL,
     &timer_writel,
 };
@@ -188,18 +189,16 @@ static void timer_hit(void *opaque)
     timer_update_irq(t);
 }
 
-static void xilinx_timer_init(SysBusDevice *dev)
+static int xilinx_timer_init(SysBusDevice *dev)
 {
     struct timerblock *t = FROM_SYSBUS(typeof (*t), dev);
     unsigned int i;
-    int timer_regs, freq_hz;
+    int timer_regs;
 
     /* All timers share a single irq line.  */
     sysbus_init_irq(dev, &t->irq);
 
     /* Init all the ptimers.  */
-    freq_hz = qdev_get_prop_int(&dev->qdev, "frequency", 2);
-    t->nr_timers = qdev_get_prop_int(&dev->qdev, "nr-timers", 2);
     t->timers = qemu_mallocz(sizeof t->timers[0] * t->nr_timers);
     for (i = 0; i < t->nr_timers; i++) {
         struct xlx_timer *xt = &t->timers[i];
@@ -208,17 +207,28 @@ static void xilinx_timer_init(SysBusDevice *dev)
         xt->nr = i;
         xt->bh = qemu_bh_new(timer_hit, xt);
         xt->ptimer = ptimer_init(xt->bh);
-        ptimer_set_freq(xt->ptimer, freq_hz);
+        ptimer_set_freq(xt->ptimer, t->freq_hz);
     }
 
     timer_regs = cpu_register_io_memory(timer_read, timer_write, t);
     sysbus_init_mmio(dev, R_MAX * 4 * t->nr_timers, timer_regs);
+    return 0;
 }
+
+static SysBusDeviceInfo xilinx_timer_info = {
+    .init = xilinx_timer_init,
+    .qdev.name  = "xilinx,timer",
+    .qdev.size  = sizeof(struct timerblock),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_UINT32("frequency", struct timerblock, freq_hz,   0),
+        DEFINE_PROP_UINT32("nr-timers", struct timerblock, nr_timers, 0),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
 
 static void xilinx_timer_register(void)
 {
-    sysbus_register_dev("xilinx,timer", sizeof (struct timerblock),
-                        xilinx_timer_init);
+    sysbus_register_withprop(&xilinx_timer_info);
 }
 
 device_init(xilinx_timer_register)

@@ -1,4 +1,7 @@
+config-devices.*
+config-all-devices.*
 config-host.*
+config-target.*
 i386
 *-softmmu
 *-darwin-user
@@ -6,6 +9,7 @@ i386
 *-bsd-user
 libhw32
 libhw64
+libuser
 qemu-doc.html
 qemu-tech.html
 qemu-doc.info
@@ -42,4 +46,7 @@ qemu-monitor.texi
 patches
 pc-bios/bios-pq/status
 pc-bios/vgabios-pq/status
+pc-bios/optionrom/multiboot.bin
+pc-bios/optionrom/multiboot.raw
+pc-bios/optionrom/extboot.bin
 .stgit-*

@@ -18,8 +18,7 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA  02110-1301 USA
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
 
@@ -155,6 +154,7 @@ set_interrupt_cause(E1000State *s, int index, uint32_t val)
     if (val)
         val |= E1000_ICR_INT_ASSERTED;
     s->mac_reg[ICR] = val;
+    s->mac_reg[ICS] = val;
     qemu_set_irq(s->dev.irq[0], (s->mac_reg[IMS] & s->mac_reg[ICR]) != 0);
 }
 
@@ -262,6 +262,11 @@ set_eecd(E1000State *s, int index, uint32_t val)
     }
     if (!(val & E1000_EECD_CS)) {		// rising, no CS (EEPROM reset)
         memset(&s->eecd_state, 0, sizeof s->eecd_state);
+        /*
+         * restore old_eecd's E1000_EECD_SK (known to be on)
+         * to avoid false detection of a clock edge
+         */
+        s->eecd_state.old_eecd = E1000_EECD_SK;
         return;
     }
     s->eecd_state.val_in <<= 1;
@@ -282,10 +287,14 @@ flash_eerd_read(E1000State *s, int x)
 {
     unsigned int index, r = s->mac_reg[EERD] & ~E1000_EEPROM_RW_REG_START;
 
+    if ((s->mac_reg[EERD] & E1000_EEPROM_RW_REG_START) == 0)
+        return (s->mac_reg[EERD]);
+
     if ((index = r >> E1000_EEPROM_RW_ADDR_SHIFT) > EEPROM_CHECKSUM_REG)
-        return 0;
-    return (s->eeprom_data[index] << E1000_EEPROM_RW_REG_DATA) |
-           E1000_EEPROM_RW_REG_DONE | r;
+        return (E1000_EEPROM_RW_REG_DONE | r);
+
+    return ((s->eeprom_data[index] << E1000_EEPROM_RW_REG_DATA) |
+           E1000_EEPROM_RW_REG_DONE | r);
 }
 
 static void
@@ -776,7 +785,7 @@ static uint32_t (*macreg_readops[])(E1000State *, int) = {
     getreg(WUFC),	getreg(TDT),	getreg(CTRL),	getreg(LEDCTL),
     getreg(MANC),	getreg(MDIC),	getreg(SWSM),	getreg(STATUS),
     getreg(TORL),	getreg(TOTL),	getreg(IMS),	getreg(TCTL),
-    getreg(RDH),	getreg(RDT),	getreg(VET),
+    getreg(RDH),	getreg(RDT),	getreg(VET),	getreg(ICS),
 
     [TOTH] = mac_read_clr8,	[TORH] = mac_read_clr8,	[GPRC] = mac_read_clr4,
     [GPTC] = mac_read_clr4,	[TPR] = mac_read_clr4,	[TPT] = mac_read_clr4,
@@ -888,7 +897,7 @@ enum { MAC_NARRAYS = ARRAY_SIZE(mac_regarraystosave) };
 static void
 nic_save(QEMUFile *f, void *opaque)
 {
-    E1000State *s = (E1000State *)opaque;
+    E1000State *s = opaque;
     int i, j;
 
     pci_device_save(&s->dev, f);
@@ -931,7 +940,7 @@ nic_save(QEMUFile *f, void *opaque)
 static int
 nic_load(QEMUFile *f, void *opaque, int version_id)
 {
-    E1000State *s = (E1000State *)opaque;
+    E1000State *s = opaque;
     int i, j, ret;
 
     if ((ret = pci_device_load(&s->dev, f)) < 0)
@@ -1011,11 +1020,11 @@ static const uint32_t mac_reg_init[] = {
 
 /* PCI interface */
 
-static CPUWriteMemoryFunc *e1000_mmio_write[] = {
+static CPUWriteMemoryFunc * const e1000_mmio_write[] = {
     e1000_mmio_writeb,	e1000_mmio_writew,	e1000_mmio_writel
 };
 
-static CPUReadMemoryFunc *e1000_mmio_read[] = {
+static CPUReadMemoryFunc * const e1000_mmio_read[] = {
     e1000_mmio_readb,	e1000_mmio_readw,	e1000_mmio_readl
 };
 
@@ -1023,7 +1032,7 @@ static void
 e1000_mmio_map(PCIDevice *pci_dev, int region_num,
                 uint32_t addr, uint32_t size, int type)
 {
-    E1000State *d = (E1000State *)pci_dev;
+    E1000State *d = DO_UPCAST(E1000State, dev, pci_dev);
     int i;
     const uint32_t excluded_regs[] = {
         E1000_MDIC, E1000_ICR, E1000_ICS, E1000_IMS,
@@ -1053,7 +1062,7 @@ e1000_cleanup(VLANClientState *vc)
 static int
 pci_e1000_uninit(PCIDevice *dev)
 {
-    E1000State *d = (E1000State *) dev;
+    E1000State *d = DO_UPCAST(E1000State, dev, dev);
 
     cpu_unregister_io_memory(d->mmio_index);
 
@@ -1072,9 +1081,9 @@ static void e1000_reset(void *opaque)
     memset(&d->tx, 0, sizeof d->tx);
 }
 
-static void pci_e1000_init(PCIDevice *pci_dev)
+static int pci_e1000_init(PCIDevice *pci_dev)
 {
-    E1000State *d = (E1000State *)pci_dev;
+    E1000State *d = DO_UPCAST(E1000State, dev, pci_dev);
     uint8_t *pci_conf;
     uint16_t checksum = 0;
     static const char info_str[] = "e1000";
@@ -1120,14 +1129,21 @@ static void pci_e1000_init(PCIDevice *pci_dev)
     qemu_format_nic_info_str(d->vc, macaddr);
 
     register_savevm(info_str, -1, 2, nic_save, nic_load, d);
-    d->dev.unregister = pci_e1000_uninit;
     qemu_register_reset(e1000_reset, d);
     e1000_reset(d);
+    return 0;
 }
+
+static PCIDeviceInfo e1000_info = {
+    .qdev.name = "e1000",
+    .qdev.size = sizeof(E1000State),
+    .init      = pci_e1000_init,
+    .exit      = pci_e1000_uninit,
+};
 
 static void e1000_register_devices(void)
 {
-    pci_qdev_register("e1000", sizeof(E1000State), pci_e1000_init);
+    pci_qdev_register(&e1000_info);
 }
 
 device_init(e1000_register_devices)

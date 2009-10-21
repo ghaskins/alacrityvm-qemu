@@ -544,12 +544,12 @@ static void eth_set_link(VLANClientState *vc)
 	eth->phy.link = !vc->link_down;
 }
 
-static CPUReadMemoryFunc *eth_read[] = {
+static CPUReadMemoryFunc * const eth_read[] = {
 	NULL, NULL,
 	&eth_readl,
 };
 
-static CPUWriteMemoryFunc *eth_write[] = {
+static CPUWriteMemoryFunc * const eth_write[] = {
 	NULL, NULL,
 	&eth_writel,
 };
@@ -590,9 +590,10 @@ void *etraxfs_eth_init(NICInfo *nd, target_phys_addr_t base, int phyaddr)
 	eth->ethregs = cpu_register_io_memory(eth_read, eth_write, eth);
 	cpu_register_physical_memory (base, 0x5c, eth->ethregs);
 
-	eth->vc = qemu_new_vlan_client(nd->vlan, nd->model, nd->name,
-				       eth_can_receive, eth_receive, NULL,
-				       eth_cleanup, eth);
+	eth->vc = nd->vc = qemu_new_vlan_client(nd->vlan, nd->netdev,
+                                                nd->model, nd->name,
+                                                eth_can_receive, eth_receive,
+                                                NULL, eth_cleanup, eth);
 	eth->vc->opaque = eth;
 	eth->vc->link_status_changed = eth_set_link;
 

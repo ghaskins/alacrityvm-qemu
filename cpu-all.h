@@ -14,8 +14,7 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA  02110-1301 USA
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #ifndef CPU_ALL_H
 #define CPU_ALL_H
@@ -28,7 +27,7 @@
  * WORDS_ALIGNED : if defined, the host cpu can only make word aligned
  * memory accesses.
  *
- * WORDS_BIGENDIAN : if defined, the host cpu is big endian and
+ * HOST_WORDS_BIGENDIAN : if defined, the host cpu is big endian and
  * otherwise little endian.
  *
  * (TARGET_WORDS_ALIGNED : same for target cpu (not supported yet))
@@ -38,7 +37,7 @@
 
 #include "softfloat.h"
 
-#if defined(WORDS_BIGENDIAN) != defined(TARGET_WORDS_BIGENDIAN)
+#if defined(HOST_WORDS_BIGENDIAN) != defined(TARGET_WORDS_BIGENDIAN)
 #define BSWAP_NEEDED
 #endif
 
@@ -124,7 +123,7 @@ typedef union {
    endian ! */
 typedef union {
     float64 d;
-#if defined(WORDS_BIGENDIAN) \
+#if defined(HOST_WORDS_BIGENDIAN) \
     || (defined(__arm__) && !defined(__VFP_FP__) && !defined(CONFIG_SOFTFLOAT))
     struct {
         uint32_t upper;
@@ -142,7 +141,7 @@ typedef union {
 #ifdef TARGET_SPARC
 typedef union {
     float128 q;
-#if defined(WORDS_BIGENDIAN) \
+#if defined(HOST_WORDS_BIGENDIAN) \
     || (defined(__arm__) && !defined(__VFP_FP__) && !defined(CONFIG_SOFTFLOAT))
     struct {
         uint32_t upmost;
@@ -222,7 +221,7 @@ static inline void stb_p(void *ptr, int v)
 /* NOTE: on arm, putting 2 in /proc/sys/debug/alignment so that the
    kernel handles unaligned load/stores may give better results, but
    it is a system wide setting : bad */
-#if defined(WORDS_BIGENDIAN) || defined(WORDS_ALIGNED)
+#if defined(HOST_WORDS_BIGENDIAN) || defined(WORDS_ALIGNED)
 
 /* conservative code for little endian unaligned accesses */
 static inline int lduw_le_p(const void *ptr)
@@ -399,7 +398,7 @@ static inline void stfq_le_p(void *ptr, float64 v)
 }
 #endif
 
-#if !defined(WORDS_BIGENDIAN) || defined(WORDS_ALIGNED)
+#if !defined(HOST_WORDS_BIGENDIAN) || defined(WORDS_ALIGNED)
 
 static inline int lduw_be_p(const void *ptr)
 {
@@ -625,8 +624,13 @@ static inline void stfq_be_p(void *ptr, float64 v)
 /* On some host systems the guest address space is reserved on the host.
  * This allows the guest address space to be offset to a convenient location.
  */
-//#define GUEST_BASE 0x20000000
-#define GUEST_BASE 0
+#if defined(CONFIG_USE_GUEST_BASE)
+extern unsigned long guest_base;
+extern int have_guest_base;
+#define GUEST_BASE guest_base
+#else
+#define GUEST_BASE 0ul
+#endif
 
 /* All direct uses of g2h and h2g need to go away for usermode softmmu.  */
 #define g2h(x) ((void *)((unsigned long)(x) + GUEST_BASE))
@@ -770,6 +774,7 @@ extern int use_icount;
 #define CPU_INTERRUPT_NMI    0x200 /* NMI pending. */
 #define CPU_INTERRUPT_INIT   0x400 /* INIT pending. */
 #define CPU_INTERRUPT_SIPI   0x800 /* SIPI pending. */
+#define CPU_INTERRUPT_MCE    0x1000 /* (x86 only) MCE pending. */
 
 void cpu_interrupt(CPUState *s, int mask);
 void cpu_reset_interrupt(CPUState *env, int mask);
@@ -836,17 +841,7 @@ void cpu_set_log_filename(const char *filename);
 int cpu_str_to_log_mask(const char *str);
 
 /* IO ports API */
-
-/* NOTE: as these functions may be even used when there is an isa
-   brige on non x86 targets, we always defined them */
-#ifndef NO_CPU_IO_DEFS
-void cpu_outb(CPUState *env, int addr, int val);
-void cpu_outw(CPUState *env, int addr, int val);
-void cpu_outl(CPUState *env, int addr, int val);
-int cpu_inb(CPUState *env, int addr);
-int cpu_inw(CPUState *env, int addr);
-int cpu_inl(CPUState *env, int addr);
-#endif
+#include "ioport.h"
 
 /* memory API */
 
@@ -879,7 +874,6 @@ int cpu_memory_rw_debug(CPUState *env, target_ulong addr,
 
 #define VGA_DIRTY_FLAG       0x01
 #define CODE_DIRTY_FLAG      0x02
-#define KQEMU_DIRTY_FLAG     0x04
 #define MIGRATION_DIRTY_FLAG 0x08
 
 /* read dirty bit (return 0 or 1) */
@@ -1028,7 +1022,7 @@ static inline int64_t cpu_get_real_ticks (void)
 
 static inline int64_t cpu_get_real_ticks(void)
 {
-#if __mips_isa_rev >= 2
+#if defined(__mips_isa_rev) && __mips_isa_rev >= 2
     uint32_t count;
     static uint32_t cyc_per_count = 0;
 
@@ -1062,14 +1056,12 @@ static inline int64_t profile_getclock(void)
     return cpu_get_real_ticks();
 }
 
-extern int64_t kqemu_time, kqemu_time_start;
 extern int64_t qemu_time, qemu_time_start;
 extern int64_t tlb_flush_time;
-extern int64_t kqemu_exec_count;
 extern int64_t dev_time;
-extern int64_t kqemu_ret_int_count;
-extern int64_t kqemu_ret_excp_count;
-extern int64_t kqemu_ret_intr_count;
 #endif
+
+void cpu_inject_x86_mce(CPUState *cenv, int bank, uint64_t status,
+                        uint64_t mcg_status, uint64_t addr, uint64_t misc);
 
 #endif /* CPU_ALL_H */

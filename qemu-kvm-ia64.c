@@ -5,7 +5,6 @@
 
 #include "hw/hw.h"
 #include "qemu-kvm.h"
-#include "libkvm-all.h"
 #include <pthread.h>
 #include <sys/utsname.h>
 #include <sys/io.h>
@@ -26,12 +25,12 @@ void kvm_arch_save_regs(CPUState *env)
 {
 }
 
-int kvm_arch_qemu_init_env(CPUState *cenv)
+int kvm_arch_init_vcpu(CPUState *cenv)
 {
     return 0;
 }
 
-int kvm_arch_halt(void *opaque, kvm_vcpu_context_t vcpu)
+int kvm_arch_halt(kvm_vcpu_context_t vcpu)
 {
     CPUState *env = cpu_single_env;
     env->hflags |= HF_HALTED_MASK;
@@ -54,10 +53,6 @@ int kvm_arch_has_work(CPUState *env)
 int kvm_arch_try_push_interrupts(void *opaque)
 {
     return 1;
-}
-
-void kvm_arch_update_regs_for_sipi(CPUState *env)
-{
 }
 
 int kvm_arch_insert_sw_breakpoint(CPUState *current_env,

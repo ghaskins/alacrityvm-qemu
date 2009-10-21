@@ -133,25 +133,25 @@ static void fw_cfg_mem_writew(void *opaque, target_phys_addr_t addr,
     fw_cfg_select(opaque, (uint16_t)value);
 }
 
-static CPUReadMemoryFunc *fw_cfg_ctl_mem_read[3] = {
+static CPUReadMemoryFunc * const fw_cfg_ctl_mem_read[3] = {
     NULL,
     NULL,
     NULL,
 };
 
-static CPUWriteMemoryFunc *fw_cfg_ctl_mem_write[3] = {
+static CPUWriteMemoryFunc * const fw_cfg_ctl_mem_write[3] = {
     NULL,
     fw_cfg_mem_writew,
     NULL,
 };
 
-static CPUReadMemoryFunc *fw_cfg_data_mem_read[3] = {
+static CPUReadMemoryFunc * const fw_cfg_data_mem_read[3] = {
     fw_cfg_mem_readb,
     NULL,
     NULL,
 };
 
-static CPUWriteMemoryFunc *fw_cfg_data_mem_write[3] = {
+static CPUWriteMemoryFunc * const fw_cfg_data_mem_write[3] = {
     fw_cfg_mem_writeb,
     NULL,
     NULL,
@@ -164,26 +164,17 @@ static void fw_cfg_reset(void *opaque)
     fw_cfg_select(s, 0);
 }
 
-static void fw_cfg_save(QEMUFile *f, void *opaque)
-{
-    FWCfgState *s = opaque;
-
-    qemu_put_be16s(f, &s->cur_entry);
-    qemu_put_be16s(f, &s->cur_offset);
-}
-
-static int fw_cfg_load(QEMUFile *f, void *opaque, int version_id)
-{
-    FWCfgState *s = opaque;
-
-    if (version_id > 1)
-        return -EINVAL;
-
-    qemu_get_be16s(f, &s->cur_entry);
-    qemu_get_be16s(f, &s->cur_offset);
-
-    return 0;
-}
+static const VMStateDescription vmstate_fw_cfg = {
+    .name = "fw_cfg",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT16(cur_entry, FWCfgState),
+        VMSTATE_UINT16(cur_offset, FWCfgState),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
 int fw_cfg_add_bytes(void *opaque, uint16_t key, uint8_t *data, uint16_t len)
 {
@@ -279,8 +270,10 @@ void *fw_cfg_init(uint32_t ctl_port, uint32_t data_port,
     fw_cfg_add_bytes(s, FW_CFG_UUID, qemu_uuid, 16);
     fw_cfg_add_i16(s, FW_CFG_NOGRAPHIC, (uint16_t)(display_type == DT_NOGRAPHIC));
     fw_cfg_add_i16(s, FW_CFG_NB_CPUS, (uint16_t)smp_cpus);
+    fw_cfg_add_i16(s, FW_CFG_MAX_CPUS, (uint16_t)max_cpus);
+    fw_cfg_add_i16(s, FW_CFG_BOOT_MENU, (uint16_t)boot_menu);
 
-    register_savevm("fw_cfg", -1, 1, fw_cfg_save, fw_cfg_load, s);
+    vmstate_register(-1, &vmstate_fw_cfg, s);
     qemu_register_reset(fw_cfg_reset, s);
     fw_cfg_reset(s);
 

@@ -15,9 +15,7 @@
  *  GNU General Public License for more details.
  *
  *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston,
- *  MA 02110-1301, USA.
+ *  along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 #include <stdlib.h>
 #include <stdio.h>
@@ -70,39 +68,6 @@ void gemu_log(const char *fmt, ...)
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
-}
-
-void cpu_outb(CPUState *env, int addr, int val)
-{
-    fprintf(stderr, "outb: port=0x%04x, data=%02x\n", addr, val);
-}
-
-void cpu_outw(CPUState *env, int addr, int val)
-{
-    fprintf(stderr, "outw: port=0x%04x, data=%04x\n", addr, val);
-}
-
-void cpu_outl(CPUState *env, int addr, int val)
-{
-    fprintf(stderr, "outl: port=0x%04x, data=%08x\n", addr, val);
-}
-
-int cpu_inb(CPUState *env, int addr)
-{
-    fprintf(stderr, "inb: port=0x%04x\n", addr);
-    return 0;
-}
-
-int cpu_inw(CPUState *env, int addr)
-{
-    fprintf(stderr, "inw: port=0x%04x\n", addr);
-    return 0;
-}
-
-int cpu_inl(CPUState *env, int addr)
-{
-    fprintf(stderr, "inl: port=0x%04x\n", addr);
-    return 0;
 }
 
 int cpu_get_pic_interrupt(CPUState *env)
@@ -191,7 +156,7 @@ void cpu_loop(CPUPPCState *env)
 /* To deal with multiple qemu header version as host for the darwin-user code */
 # define DAR SPR_DAR
 #endif
-            EXCP_DUMP(env, "Invalid data memory access: 0x" ADDRX "\n",
+            EXCP_DUMP(env, "Invalid data memory access: 0x" TARGET_FMT_lx "\n",
                       env->spr[SPR_DAR]);
             /* Handle this via the gdb */
             gdb_handlesig (env, SIGSEGV);
@@ -200,7 +165,7 @@ void cpu_loop(CPUPPCState *env)
             queue_signal(info.si_signo, &info);
             break;
         case POWERPC_EXCP_ISI:      /* Instruction storage exception         */
-            EXCP_DUMP(env, "Invalid instruction fetch: 0x\n" ADDRX "\n",
+            EXCP_DUMP(env, "Invalid instruction fetch: 0x\n" TARGET_FMT_lx "\n",
                       env->spr[SPR_DAR]);
             /* Handle this via the gdb */
             gdb_handlesig (env, SIGSEGV);

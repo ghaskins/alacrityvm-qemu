@@ -24,7 +24,7 @@ enum BSDType {
 #include "target_signal.h"
 #include "gdbstub.h"
 
-#if defined(USE_NPTL)
+#if defined(CONFIG_USE_NPTL)
 #define THREAD __thread
 #else
 #define THREAD
@@ -84,6 +84,9 @@ typedef struct TaskState {
 
 void init_task_state(TaskState *ts);
 extern const char *qemu_uname_release;
+#if defined(CONFIG_USE_GUEST_BASE)
+extern unsigned long mmap_min_addr;
+#endif
 
 /* ??? See if we can avoid exposing so much of the loader internals.  */
 /*
@@ -137,8 +140,6 @@ abi_long do_openbsd_syscall(void *cpu_env, int num, abi_long arg1,
 void gemu_log(const char *fmt, ...) __attribute__((format(printf,1,2)));
 extern THREAD CPUState *thread_env;
 void cpu_loop(CPUState *env, enum BSDType bsd_type);
-void init_paths(const char *prefix);
-const char *path(const char *pathname);
 char *target_strerror(int err);
 int get_osversion(void);
 void fork_start(void);
@@ -188,10 +189,13 @@ void mmap_lock(void);
 void mmap_unlock(void);
 void cpu_list_lock(void);
 void cpu_list_unlock(void);
-#if defined(USE_NPTL)
+#if defined(CONFIG_USE_NPTL)
 void mmap_fork_start(void);
 void mmap_fork_end(int child);
 #endif
+
+/* main.c */
+extern unsigned long x86_stack_size;
 
 /* user access */
 
@@ -382,7 +386,7 @@ static inline void *lock_user_string(abi_ulong guest_addr)
 #define unlock_user_struct(host_ptr, guest_addr, copy)          \
     unlock_user(host_ptr, guest_addr, (copy) ? sizeof(*host_ptr) : 0)
 
-#if defined(USE_NPTL)
+#if defined(CONFIG_USE_NPTL)
 #include <pthread.h>
 #endif
 

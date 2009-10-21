@@ -2,13 +2,11 @@
 #include "apic.h"
 #include "vm.h"
 
-static void *g_apic;
-static void *g_ioapic;
-
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned u32;
 typedef unsigned long ulong;
+typedef unsigned long long u64;
 
 typedef struct {
     unsigned short offset0;
@@ -102,22 +100,17 @@ static idt_entry_t idt[256];
 static int g_fail;
 static int g_tests;
 
+static void outb(unsigned char data, unsigned short port)
+{
+    asm volatile ("out %0, %1" : : "a"(data), "d"(port));
+}
+
 static void report(const char *msg, int pass)
 {
     ++g_tests;
     printf("%s: %s\n", msg, (pass ? "PASS" : "FAIL"));
     if (!pass)
         ++g_fail;
-}
-
-static u32 apic_read(unsigned reg)
-{
-    return *(volatile u32 *)(g_apic + reg);
-}
-
-static void apic_write(unsigned reg, u32 val)
-{
-    *(volatile u32 *)(g_apic + reg) = val;
 }
 
 static void test_lapic_existence(void)
@@ -127,6 +120,17 @@ static void test_lapic_existence(void)
     lvr = apic_read(APIC_LVR);
     printf("apic version: %x\n", lvr);
     report("apic existence", (u16)lvr == 0x14);
+}
+
+#define MSR_APIC_BASE 0x0000001b
+
+void test_enable_x2apic(void)
+{
+    if (enable_x2apic()) {
+        printf("x2apic enabled\n");
+    } else {
+        printf("x2apic not detected\n");
+    }
 }
 
 static u16 read_cs(void)
@@ -218,36 +222,10 @@ static void test_self_ipi(void)
 
     set_idt_entry(vec, self_ipi_isr);
     irq_enable();
-    apic_write(APIC_ICR,
-               APIC_DEST_SELF | APIC_DEST_PHYSICAL | APIC_DM_FIXED | vec);
+    apic_icr_write(APIC_DEST_SELF | APIC_DEST_PHYSICAL | APIC_DM_FIXED | vec,
+                   0);
     asm volatile ("nop");
     report("self ipi", ipi_count == 1);
-}
-
-static void ioapic_write_reg(unsigned reg, u32 value)
-{
-    *(volatile u32 *)g_ioapic = reg;
-    *(volatile u32 *)(g_ioapic + 0x10) = value;
-}
-
-typedef struct {
-    u8 vector;
-    u8 delivery_mode:3;
-    u8 dest_mode:1;
-    u8 delivery_status:1;
-    u8 polarity:1;
-    u8 remote_irr:1;
-    u8 trig_mode:1;
-    u8 mask:1;
-    u8 reserve:7;
-    u8 reserved[4];
-    u8 dest_id;
-} ioapic_redir_entry_t;
-
-static void ioapic_write_redir(unsigned line, ioapic_redir_entry_t e)
-{
-    ioapic_write_reg(0x10 + line * 2 + 0, ((u32 *)&e)[0]);
-    ioapic_write_reg(0x10 + line * 2 + 1, ((u32 *)&e)[1]);
 }
 
 static void set_ioapic_redir(unsigned line, unsigned vec)
@@ -323,21 +301,15 @@ static void test_ioapic_simultaneous(void)
            g_66 && g_78 && g_66_after_78 && g_66_rip == g_78_rip);
 }
 
-static void enable_apic(void)
-{
-    apic_write(0xf0, 0x1ff); /* spurious vector register */
-}
-
 int main()
 {
     setup_vm();
 
-    g_apic = vmap(0xfee00000, 0x1000);
-    g_ioapic = vmap(0xfec00000, 0x1000);
-
     test_lapic_existence();
 
+    mask_pic_interrupts();
     enable_apic();
+    test_enable_x2apic();
     init_idt();
 
     test_self_ipi();

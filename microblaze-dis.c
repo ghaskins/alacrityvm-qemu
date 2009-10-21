@@ -12,8 +12,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  */
+along with this program; if not, see <http://www.gnu.org/licenses/>.  */
 
 /*
  * Copyright (c) 2001 Xilinx, Inc.  All rights reserved. 
@@ -55,8 +54,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  */
+along with this program; if not, see <http://www.gnu.org/licenses/>.  */
 
 /*
  * Copyright (c) 2001 Xilinx, Inc.  All rights reserved. 
@@ -545,7 +543,7 @@ print_insn_microblaze (bfd_vma memaddr, struct disassemble_info * info)
   unsigned long       inst, prev_inst;
   struct op_code_struct * op, *pop;
   int                 immval = 0;
-  boolean             immfound = false;
+  bfd_boolean         immfound = false;
   static bfd_vma prev_insn_addr = -1; /*init the prev insn addr */
   static int     prev_insn_vma = -1;  /*init the prev insn vma */
   int            curr_insn_vma = info->buffer_vma;

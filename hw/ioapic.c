@@ -17,12 +17,12 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA  02110-1301 USA
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "hw.h"
 #include "pc.h"
+#include "sysemu.h"
 #include "qemu-timer.h"
 #include "host-utils.h"
 
@@ -95,14 +95,13 @@ void ioapic_set_irq(void *opaque, int vector, int level)
 {
     IOAPICState *s = opaque;
 
-#if 0
     /* ISA IRQs map to GSI 1-1 except for IRQ0 which maps
      * to GSI 2.  GSI maps to ioapic 1-1.  This is not
      * the cleanest way of doing it but it should work. */
 
-    if (vector == 0)
+    if (vector == 0 && irq0override) {
         vector = 2;
-#endif
+    }
 
     if (vector >= 0 && vector < IOAPIC_NUM_PINS) {
         uint32_t mask = 1 << vector;
@@ -241,54 +240,52 @@ static void kvm_kernel_ioapic_load_from_user(IOAPICState *s)
 #endif
 }
 
-static void ioapic_save(QEMUFile *f, void *opaque)
+static void ioapic_pre_save(void *opaque)
 {
-    IOAPICState *s = opaque;
-    int i;
-
-    if (kvm_enabled() && qemu_kvm_irqchip_in_kernel()) {
+    IOAPICState *s = (void *)opaque;
+ 
+    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
         kvm_kernel_ioapic_save_to_user(s);
     }
-
-    qemu_put_8s(f, &s->id);
-    qemu_put_8s(f, &s->ioregsel);
-    qemu_put_be64s(f, &s->base_address);
-    qemu_put_be32s(f, &s->irr);
-    for (i = 0; i < IOAPIC_NUM_PINS; i++) {
-        qemu_put_be64s(f, &s->ioredtbl[i]);
-    }
 }
 
-static int ioapic_load(QEMUFile *f, void *opaque, int version_id)
+static int ioapic_pre_load(void *opaque)
 {
     IOAPICState *s = opaque;
-    int i;
 
-    if (version_id < 1 || version_id > 2)
-        return -EINVAL;
-
-    qemu_get_8s(f, &s->id);
-    qemu_get_8s(f, &s->ioregsel);
-    if (version_id == 2) {
-      /* for version 2, we get this data off of the wire */
-      qemu_get_be64s(f, &s->base_address);
-      qemu_get_be32s(f, &s->irr);
-    }
-    else {
-      /* in case we are doing version 1, we just set these to sane values */
-      s->base_address = IOAPIC_DEFAULT_BASE_ADDRESS;
-      s->irr = 0;
-    }
-    for (i = 0; i < IOAPIC_NUM_PINS; i++) {
-        qemu_get_be64s(f, &s->ioredtbl[i]);
-    }
-
-    if (kvm_enabled() && qemu_kvm_irqchip_in_kernel()) {
-        kvm_kernel_ioapic_load_from_user(s);
-    }
-
+    /* in case we are doing version 1, we just set these to sane values */
+    s->base_address = IOAPIC_DEFAULT_BASE_ADDRESS;
+    s->irr = 0;
     return 0;
 }
+
+static int ioapic_post_load(void *opaque, int version_id)
+{
+    IOAPICState *s = opaque;
+
+    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
+        kvm_kernel_ioapic_load_from_user(s);
+    }
+    return 0;
+}
+
+static const VMStateDescription vmstate_ioapic = {
+    .name = "ioapic",
+    .version_id = 2,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .pre_load = ioapic_pre_load,
+    .post_load = ioapic_post_load,
+    .pre_save = ioapic_pre_save,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT8(id, IOAPICState),
+        VMSTATE_UINT8(ioregsel, IOAPICState),
+        VMSTATE_UINT64_V(base_address, IOAPICState, 2),
+        VMSTATE_UINT32_V(irr, IOAPICState, 2),
+        VMSTATE_UINT64_ARRAY(ioredtbl, IOAPICState, IOAPIC_NUM_PINS),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
 static void ioapic_reset(void *opaque)
 {
@@ -300,27 +297,28 @@ static void ioapic_reset(void *opaque)
     for(i = 0; i < IOAPIC_NUM_PINS; i++)
         s->ioredtbl[i] = 1 << 16; /* mask LVT */
 #ifdef KVM_CAP_IRQCHIP
-    if (kvm_enabled() && qemu_kvm_irqchip_in_kernel()) {
+    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
         kvm_kernel_ioapic_load_from_user(s);
     }
 #endif
 }
 
-static CPUReadMemoryFunc *ioapic_mem_read[3] = {
+static CPUReadMemoryFunc * const ioapic_mem_read[3] = {
     ioapic_mem_readl,
     ioapic_mem_readl,
     ioapic_mem_readl,
 };
 
-static CPUWriteMemoryFunc *ioapic_mem_write[3] = {
+static CPUWriteMemoryFunc * const ioapic_mem_write[3] = {
     ioapic_mem_writel,
     ioapic_mem_writel,
     ioapic_mem_writel,
 };
 
-IOAPICState *ioapic_init(void)
+qemu_irq *ioapic_init(void)
 {
     IOAPICState *s;
+    qemu_irq *irq;
     int io_memory;
 
     s = qemu_mallocz(sizeof(IOAPICState));
@@ -330,8 +328,9 @@ IOAPICState *ioapic_init(void)
                                        ioapic_mem_write, s);
     cpu_register_physical_memory(0xfec00000, 0x1000, io_memory);
 
-    register_savevm("ioapic", 0, 2, ioapic_save, ioapic_load, s);
+    vmstate_register(0, &vmstate_ioapic, s);
     qemu_register_reset(ioapic_reset, s);
+    irq = qemu_allocate_irqs(ioapic_set_irq, s, IOAPIC_NUM_PINS);
 
-    return s;
+    return irq;
 }

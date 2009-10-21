@@ -108,10 +108,6 @@ typedef unsigned char u_int8_t;
 #include <arpa/inet.h>
 #endif
 
-#ifdef GETTIMEOFDAY_ONE_ARG
-#define gettimeofday(x, y) gettimeofday(x)
-#endif
-
 /* Systems lacking strdup() definition in <string.h>. */
 #if defined(ultrix)
 char *strdup(const char *);
@@ -178,7 +174,7 @@ int inet_aton(const char *cp, struct in_addr *ia);
 
 #include "debug.h"
 
-#include "sys-queue.h"
+#include "qemu-queue.h"
 
 #include "libslirp.h"
 #include "ip.h"
@@ -202,7 +198,7 @@ int inet_aton(const char *cp, struct in_addr *ia);
 #include "tftp.h"
 
 struct Slirp {
-    TAILQ_ENTRY(Slirp) entry;
+    QTAILQ_ENTRY(Slirp) entry;
 
     /* virtual network configuration */
     struct in_addr vnetwork_addr;

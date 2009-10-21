@@ -21,7 +21,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "hw.h"
+#include "sysbus.h"
 #include "escc.h"
 #include "qemu-char.h"
 #include "console.h"
@@ -114,8 +116,12 @@ typedef struct ChannelState {
 } ChannelState;
 
 struct SerialState {
+    SysBusDevice busdev;
     struct ChannelState chn[2];
-    int it_shift;
+    uint32_t it_shift;
+    int mmio_index;
+    uint32_t disabled;
+    uint32_t frequency;
 };
 
 #define SERIAL_CTRL 0
@@ -648,13 +654,13 @@ static void serial_event(void *opaque, int event)
         serial_receive_break(s);
 }
 
-static CPUReadMemoryFunc *escc_mem_read[3] = {
+static CPUReadMemoryFunc * const escc_mem_read[3] = {
     escc_mem_readb,
     NULL,
     NULL,
 };
 
-static CPUWriteMemoryFunc *escc_mem_write[3] = {
+static CPUWriteMemoryFunc * const escc_mem_write[3] = {
     escc_mem_writeb,
     NULL,
     NULL,
@@ -723,44 +729,28 @@ int escc_init(target_phys_addr_t base, qemu_irq irqA, qemu_irq irqB,
               CharDriverState *chrA, CharDriverState *chrB,
               int clock, int it_shift)
 {
-    int escc_io_memory, i;
-    SerialState *s;
+    DeviceState *dev;
+    SysBusDevice *s;
+    SerialState *d;
 
-    s = qemu_mallocz(sizeof(SerialState));
-
-    escc_io_memory = cpu_register_io_memory(escc_mem_read,
-                                            escc_mem_write,
-                                            s);
-    if (base)
-        cpu_register_physical_memory(base, ESCC_SIZE << it_shift,
-                                     escc_io_memory);
-
-    s->it_shift = it_shift;
-    s->chn[0].chr = chrB;
-    s->chn[1].chr = chrA;
-    s->chn[0].disabled = 0;
-    s->chn[1].disabled = 0;
-    s->chn[0].irq = irqB;
-    s->chn[1].irq = irqA;
-
-    for (i = 0; i < 2; i++) {
-        s->chn[i].chn = 1 - i;
-        s->chn[i].type = ser;
-        s->chn[i].clock = clock / 2;
-        if (s->chn[i].chr) {
-            qemu_chr_add_handlers(s->chn[i].chr, serial_can_receive,
-                                  serial_receive1, serial_event, &s->chn[i]);
-        }
+    dev = qdev_create(NULL, "escc");
+    qdev_prop_set_uint32(dev, "disabled", 0);
+    qdev_prop_set_uint32(dev, "frequency", clock);
+    qdev_prop_set_uint32(dev, "it_shift", it_shift);
+    qdev_prop_set_chr(dev, "chrB", chrB);
+    qdev_prop_set_chr(dev, "chrA", chrA);
+    qdev_prop_set_uint32(dev, "chnBtype", ser);
+    qdev_prop_set_uint32(dev, "chnAtype", ser);
+    qdev_init_nofail(dev);
+    s = sysbus_from_qdev(dev);
+    sysbus_connect_irq(s, 0, irqB);
+    sysbus_connect_irq(s, 1, irqA);
+    if (base) {
+        sysbus_mmio_map(s, 0, base);
     }
-    s->chn[0].otherchn = &s->chn[1];
-    s->chn[1].otherchn = &s->chn[0];
-    if (base)
-        register_savevm("escc", base, 2, escc_save, escc_load, s);
-    else
-        register_savevm("escc", -1, 2, escc_save, escc_load, s);
-    qemu_register_reset(escc_reset, s);
-    escc_reset(s);
-    return escc_io_memory;
+
+    d = FROM_SYSBUS(SerialState, s);
+    return d->mmio_index;
 }
 
 static const uint8_t keycodes[128] = {
@@ -879,18 +869,18 @@ static void sunmouse_event(void *opaque,
     ch = dx;
 
     if (ch > 127)
-        ch=127;
+        ch = 127;
     else if (ch < -127)
-        ch=-127;
+        ch = -127;
 
     put_queue(s, ch & 0xff);
 
     ch = -dy;
 
     if (ch > 127)
-        ch=127;
+        ch = 127;
     else if (ch < -127)
-        ch=-127;
+        ch = -127;
 
     put_queue(s, ch & 0xff);
 
@@ -903,35 +893,81 @@ static void sunmouse_event(void *opaque,
 void slavio_serial_ms_kbd_init(target_phys_addr_t base, qemu_irq irq,
                                int disabled, int clock, int it_shift)
 {
-    int slavio_serial_io_memory, i;
-    SerialState *s;
+    DeviceState *dev;
+    SysBusDevice *s;
 
-    s = qemu_mallocz(sizeof(SerialState));
+    dev = qdev_create(NULL, "escc");
+    qdev_prop_set_uint32(dev, "disabled", disabled);
+    qdev_prop_set_uint32(dev, "frequency", clock);
+    qdev_prop_set_uint32(dev, "it_shift", it_shift);
+    qdev_prop_set_chr(dev, "chrB", NULL);
+    qdev_prop_set_chr(dev, "chrA", NULL);
+    qdev_prop_set_uint32(dev, "chnBtype", mouse);
+    qdev_prop_set_uint32(dev, "chnAtype", kbd);
+    qdev_init_nofail(dev);
+    s = sysbus_from_qdev(dev);
+    sysbus_connect_irq(s, 0, irq);
+    sysbus_connect_irq(s, 1, irq);
+    sysbus_mmio_map(s, 0, base);
+}
 
-    s->it_shift = it_shift;
+static int escc_init1(SysBusDevice *dev)
+{
+    SerialState *s = FROM_SYSBUS(SerialState, dev);
+    int io;
+    unsigned int i;
+
+    s->chn[0].disabled = s->disabled;
+    s->chn[1].disabled = s->disabled;
     for (i = 0; i < 2; i++) {
-        s->chn[i].irq = irq;
+        sysbus_init_irq(dev, &s->chn[i].irq);
         s->chn[i].chn = 1 - i;
-        s->chn[i].chr = NULL;
-        s->chn[i].clock = clock / 2;
+        s->chn[i].clock = s->frequency / 2;
+        if (s->chn[i].chr) {
+            qemu_chr_add_handlers(s->chn[i].chr, serial_can_receive,
+                                  serial_receive1, serial_event, &s->chn[i]);
+        }
     }
     s->chn[0].otherchn = &s->chn[1];
     s->chn[1].otherchn = &s->chn[0];
-    s->chn[0].type = mouse;
-    s->chn[1].type = kbd;
-    s->chn[0].disabled = disabled;
-    s->chn[1].disabled = disabled;
 
-    slavio_serial_io_memory = cpu_register_io_memory(escc_mem_read,
-                                                     escc_mem_write,
-                                                     s);
-    cpu_register_physical_memory(base, ESCC_SIZE << it_shift,
-                                 slavio_serial_io_memory);
+    io = cpu_register_io_memory(escc_mem_read, escc_mem_write, s);
+    sysbus_init_mmio(dev, ESCC_SIZE << s->it_shift, io);
+    s->mmio_index = io;
 
-    qemu_add_mouse_event_handler(sunmouse_event, &s->chn[0], 0,
-                                 "QEMU Sun Mouse");
-    qemu_add_kbd_event_handler(sunkbd_event, &s->chn[1]);
-    register_savevm("slavio_serial_mouse", base, 2, escc_save, escc_load, s);
+    if (s->chn[0].type == mouse) {
+        qemu_add_mouse_event_handler(sunmouse_event, &s->chn[0], 0,
+                                     "QEMU Sun Mouse");
+    }
+    if (s->chn[1].type == kbd) {
+        qemu_add_kbd_event_handler(sunkbd_event, &s->chn[1]);
+    }
+    register_savevm("escc", -1, 2, escc_save, escc_load, s);
     qemu_register_reset(escc_reset, s);
     escc_reset(s);
+    return 0;
 }
+
+static SysBusDeviceInfo escc_info = {
+    .init = escc_init1,
+    .qdev.name  = "escc",
+    .qdev.size  = sizeof(SerialState),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_UINT32("frequency", SerialState, frequency,   0),
+        DEFINE_PROP_UINT32("it_shift",  SerialState, it_shift,    0),
+        DEFINE_PROP_UINT32("disabled",  SerialState, disabled,    0),
+        DEFINE_PROP_UINT32("disabled",  SerialState, disabled,    0),
+        DEFINE_PROP_UINT32("chnBtype",  SerialState, chn[0].type, 0),
+        DEFINE_PROP_UINT32("chnAtype",  SerialState, chn[1].type, 0),
+        DEFINE_PROP_CHR("chrB", SerialState, chn[0].chr),
+        DEFINE_PROP_CHR("chrA", SerialState, chn[1].chr),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
+
+static void escc_register_devices(void)
+{
+    sysbus_register_withprop(&escc_info);
+}
+
+device_init(escc_register_devices)

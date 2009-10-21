@@ -43,21 +43,31 @@ void qemu_start_incoming_migration(const char *uri)
 #if !defined(WIN32)
     else if (strstart(uri, "exec:", &p))
         exec_start_incoming_migration(p);
+    else if (strstart(uri, "unix:", &p))
+        unix_start_incoming_migration(p);
+    else if (strstart(uri, "fd:", &p))
+        fd_start_incoming_migration(p);
 #endif
     else
         fprintf(stderr, "unknown migration protocol: %s\n", uri);
 }
 
-void do_migrate(Monitor *mon, int detach, const char *uri)
+void do_migrate(Monitor *mon, const QDict *qdict)
 {
     MigrationState *s = NULL;
     const char *p;
+    int detach = qdict_get_int(qdict, "detach");
+    const char *uri = qdict_get_str(qdict, "uri");
 
     if (strstart(uri, "tcp:", &p))
         s = tcp_start_outgoing_migration(p, max_throttle, detach);
 #if !defined(WIN32)
     else if (strstart(uri, "exec:", &p))
         s = exec_start_outgoing_migration(p, max_throttle, detach);
+    else if (strstart(uri, "unix:", &p))
+        s = unix_start_outgoing_migration(p, max_throttle, detach);
+    else if (strstart(uri, "fd:", &p))
+        s = fd_start_outgoing_migration(mon, p, max_throttle, detach);
 #endif
     else
         monitor_printf(mon, "unknown migration protocol: %s\n", uri);
@@ -72,7 +82,7 @@ void do_migrate(Monitor *mon, int detach, const char *uri)
     }
 }
 
-void do_migrate_cancel(Monitor *mon)
+void do_migrate_cancel(Monitor *mon, const QDict *qdict)
 {
     MigrationState *s = current_migration;
 
@@ -80,11 +90,12 @@ void do_migrate_cancel(Monitor *mon)
         s->cancel(s);
 }
 
-void do_migrate_set_speed(Monitor *mon, const char *value)
+void do_migrate_set_speed(Monitor *mon, const QDict *qdict)
 {
     double d;
     char *ptr;
     FdMigrationState *s;
+    const char *value = qdict_get_str(qdict, "value");
 
     d = strtod(value, &ptr);
     switch (*ptr) {
@@ -118,10 +129,11 @@ uint64_t migrate_max_downtime(void)
     return max_downtime;
 }
 
-void do_migrate_set_downtime(Monitor *mon, const char *value)
+void do_migrate_set_downtime(Monitor *mon, const QDict *qdict)
 {
     char *ptr;
     double d;
+    const char *value = qdict_get_str(qdict, "value");
 
     d = strtod(value, &ptr);
     if (!strcmp(ptr,"ms")) {
@@ -261,12 +273,17 @@ void migrate_fd_put_ready(void *opaque)
     dprintf("iterate\n");
     if (qemu_savevm_state_iterate(s->file) == 1) {
         int state;
+        int old_vm_running = vm_running;
+
         dprintf("done iterating\n");
         vm_stop(0);
 
+        qemu_aio_flush();
         bdrv_flush_all();
         if ((qemu_savevm_state_complete(s->file)) < 0) {
-            vm_start();
+            if (old_vm_running) {
+                vm_start();
+            }
             state = MIG_STATE_ERROR;
         } else {
             state = MIG_STATE_COMPLETED;

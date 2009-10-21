@@ -14,8 +14,7 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA  02110-1301 USA
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #include "config.h"
 #include "dyngen-exec.h"
@@ -34,14 +33,23 @@ register struct CPUX86State *env asm(AREG0);
 #include "qemu-common.h"
 #include "qemu-log.h"
 
+#undef EAX
 #define EAX (env->regs[R_EAX])
+#undef ECX
 #define ECX (env->regs[R_ECX])
+#undef EDX
 #define EDX (env->regs[R_EDX])
+#undef EBX
 #define EBX (env->regs[R_EBX])
+#undef ESP
 #define ESP (env->regs[R_ESP])
+#undef EBP
 #define EBP (env->regs[R_EBP])
+#undef ESI
 #define ESI (env->regs[R_ESI])
+#undef EDI
 #define EDI (env->regs[R_EDI])
+#undef EIP
 #define EIP (env->eip)
 #define DF  (env->df)
 
@@ -156,7 +164,7 @@ typedef union {
 /* NOTE: arm is horrible as double 32 bit words are stored in big endian ! */
 typedef union {
     double d;
-#if !defined(WORDS_BIGENDIAN) && !defined(__arm__)
+#if !defined(HOST_WORDS_BIGENDIAN) && !defined(__arm__)
     struct {
         uint32_t lower;
         int32_t upper;

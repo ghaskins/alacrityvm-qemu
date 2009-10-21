@@ -119,37 +119,37 @@ static int sh_pci_addr2port(SHPCIC *pcic, target_phys_addr_t addr)
 
 static void sh_pci_outb (void *p, target_phys_addr_t addr, uint32_t val)
 {
-    cpu_outb(NULL, sh_pci_addr2port(p, addr), val);
+    cpu_outb(sh_pci_addr2port(p, addr), val);
 }
 
 static void sh_pci_outw (void *p, target_phys_addr_t addr, uint32_t val)
 {
-    cpu_outw(NULL, sh_pci_addr2port(p, addr), val);
+    cpu_outw(sh_pci_addr2port(p, addr), val);
 }
 
 static void sh_pci_outl (void *p, target_phys_addr_t addr, uint32_t val)
 {
-    cpu_outl(NULL, sh_pci_addr2port(p, addr), val);
+    cpu_outl(sh_pci_addr2port(p, addr), val);
 }
 
 static uint32_t sh_pci_inb (void *p, target_phys_addr_t addr)
 {
-    return cpu_inb(NULL, sh_pci_addr2port(p, addr));
+    return cpu_inb(sh_pci_addr2port(p, addr));
 }
 
 static uint32_t sh_pci_inw (void *p, target_phys_addr_t addr)
 {
-    return cpu_inw(NULL, sh_pci_addr2port(p, addr));
+    return cpu_inw(sh_pci_addr2port(p, addr));
 }
 
 static uint32_t sh_pci_inl (void *p, target_phys_addr_t addr)
 {
-    return cpu_inl(NULL, sh_pci_addr2port(p, addr));
+    return cpu_inl(sh_pci_addr2port(p, addr));
 }
 
 typedef struct {
-    CPUReadMemoryFunc *r[3];
-    CPUWriteMemoryFunc *w[3];
+    CPUReadMemoryFunc * const r[3];
+    CPUWriteMemoryFunc * const w[3];
 } MemOp;
 
 static MemOp sh_pci_reg = {
@@ -168,14 +168,14 @@ static MemOp sh_pci_iop = {
 };
 
 PCIBus *sh_pci_register_bus(pci_set_irq_fn set_irq, pci_map_irq_fn map_irq,
-                            qemu_irq *pic, int devfn_min, int nirq)
+                            void *opaque, int devfn_min, int nirq)
 {
     SHPCIC *p;
     int mem, reg, iop;
 
     p = qemu_mallocz(sizeof(SHPCIC));
     p->bus = pci_register_bus(NULL, "pci",
-                              set_irq, map_irq, pic, devfn_min, nirq);
+                              set_irq, map_irq, opaque, devfn_min, nirq);
 
     p->dev = pci_register_device(p->bus, "SH PCIC", sizeof(PCIDevice),
                                  -1, NULL, NULL);

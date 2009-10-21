@@ -15,7 +15,7 @@
 #include "net.h"
 #include "qemu-timer.h"
 #include "virtio-net.h"
-#ifdef USE_KVM
+#ifdef CONFIG_KVM
 #include "qemu-kvm.h"
 #endif
 
@@ -137,7 +137,7 @@ static uint32_t virtio_net_get_features(VirtIODevice *vdev)
 
 #ifdef TAP_VNET_HDR
     VirtIONet *n = to_virtio_net(vdev);
-    VLANClientState *host = n->vc->vlan->first_client;
+    VLANClientState *host = QTAILQ_FIRST(&n->vc->vlan->clients);
 
     if (tap_has_vnet_hdr(host)) {
         tap_using_vnet_hdr(host, 1);
@@ -150,7 +150,10 @@ static uint32_t virtio_net_get_features(VirtIODevice *vdev)
         features |= (1 << VIRTIO_NET_F_HOST_TSO6);
         features |= (1 << VIRTIO_NET_F_HOST_ECN);
         features |= (1 << VIRTIO_NET_F_MRG_RXBUF);
-        /* Kernel can't actually handle UFO in software currently. */
+        if (tap_has_ufo(host)) {
+            features |= (1 << VIRTIO_NET_F_GUEST_UFO);
+            features |= (1 << VIRTIO_NET_F_HOST_UFO);
+        }
     }
 #endif
 
@@ -176,7 +179,7 @@ static void virtio_net_set_features(VirtIODevice *vdev, uint32_t features)
 {
     VirtIONet *n = to_virtio_net(vdev);
 #ifdef TAP_VNET_HDR
-    VLANClientState *host = n->vc->vlan->first_client;
+    VLANClientState *host = QTAILQ_FIRST(&n->vc->vlan->clients);
 #endif
 
     n->mergeable_rx_bufs = !!(features & (1 << VIRTIO_NET_F_MRG_RXBUF));
@@ -189,7 +192,8 @@ static void virtio_net_set_features(VirtIODevice *vdev, uint32_t features)
                       (features >> VIRTIO_NET_F_GUEST_CSUM) & 1,
                       (features >> VIRTIO_NET_F_GUEST_TSO4) & 1,
                       (features >> VIRTIO_NET_F_GUEST_TSO6) & 1,
-                      (features >> VIRTIO_NET_F_GUEST_ECN)  & 1);
+                      (features >> VIRTIO_NET_F_GUEST_ECN)  & 1,
+                      (features >> VIRTIO_NET_F_GUEST_UFO)  & 1);
 #endif
 }
 
@@ -344,12 +348,9 @@ static void virtio_net_handle_rx(VirtIODevice *vdev, VirtQueue *vq)
 
     qemu_flush_queued_packets(n->vc);
 
-#ifdef USE_KVM
     /* We now have RX buffers, signal to the IO thread to break out of the
-       select to re-poll the tap file descriptor */
-    if (kvm_enabled())
-        qemu_kvm_notify_work();
-#endif
+     * select to re-poll the tap file descriptor */
+    qemu_notify_event();
 }
 
 static int do_virtio_net_can_receive(VirtIONet *n, int bufsize)
@@ -431,7 +432,7 @@ static int receive_header(VirtIONet *n, struct iovec *iov, int iovcnt,
     hdr->gso_type = VIRTIO_NET_HDR_GSO_NONE;
 
 #ifdef TAP_VNET_HDR
-    if (tap_has_vnet_hdr(n->vc->vlan->first_client)) {
+    if (tap_has_vnet_hdr(QTAILQ_FIRST(&n->vc->vlan->clients))) {
         if (!raw) {
             memcpy(hdr, buf, sizeof(*hdr));
         } else {
@@ -462,7 +463,7 @@ static int receive_filter(VirtIONet *n, const uint8_t *buf, int size)
         return 1;
 
 #ifdef TAP_VNET_HDR
-    if (tap_has_vnet_hdr(n->vc->vlan->first_client))
+    if (tap_has_vnet_hdr(QTAILQ_FIRST(&n->vc->vlan->clients)))
         ptr += sizeof(struct virtio_net_hdr);
 #endif
 
@@ -609,7 +610,7 @@ static void virtio_net_flush_tx(VirtIONet *n, VirtQueue *vq)
 {
     VirtQueueElement elem;
 #ifdef TAP_VNET_HDR
-    int has_vnet_hdr = tap_has_vnet_hdr(n->vc->vlan->first_client);
+    int has_vnet_hdr = tap_has_vnet_hdr(QTAILQ_FIRST(&n->vc->vlan->clients));
 #else
     int has_vnet_hdr = 0;
 #endif
@@ -714,7 +715,7 @@ static void virtio_net_save(QEMUFile *f, void *opaque)
     qemu_put_buffer(f, (uint8_t *)n->vlans, MAX_VLAN >> 3);
 
 #ifdef TAP_VNET_HDR
-    qemu_put_be32(f, tap_has_vnet_hdr(n->vc->vlan->first_client));
+    qemu_put_be32(f, tap_has_vnet_hdr(QTAILQ_FIRST(&n->vc->vlan->clients)));
 #else
     qemu_put_be32(f, 0);
 #endif
@@ -772,7 +773,7 @@ static int virtio_net_load(QEMUFile *f, void *opaque, int version_id)
 
     if (version_id >= 7 && qemu_get_be32(f)) {
 #ifdef TAP_VNET_HDR
-        tap_using_vnet_hdr(n->vc->vlan->first_client, 1);
+        tap_using_vnet_hdr(QTAILQ_FIRST(&n->vc->vlan->clients), 1);
 #else
         fprintf(stderr,
                 "virtio-net: saved image requires vnet header support\n");

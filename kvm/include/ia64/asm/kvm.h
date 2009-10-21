@@ -1,43 +1,3 @@
-#ifndef KVM_UNIFDEF_H
-#define KVM_UNIFDEF_H
-
-#ifdef __i386__
-#ifndef CONFIG_X86_32
-#define CONFIG_X86_32 1
-#endif
-#endif
-
-#ifdef __x86_64__
-#ifndef CONFIG_X86_64
-#define CONFIG_X86_64 1
-#endif
-#endif
-
-#if defined(__i386__) || defined (__x86_64__)
-#ifndef CONFIG_X86
-#define CONFIG_X86 1
-#endif
-#endif
-
-#ifdef __ia64__
-#ifndef CONFIG_IA64
-#define CONFIG_IA64 1
-#endif
-#endif
-
-#ifdef __PPC__
-#ifndef CONFIG_PPC
-#define CONFIG_PPC 1
-#endif
-#endif
-
-#ifdef __s390__
-#ifndef CONFIG_S390
-#define CONFIG_S390 1
-#endif
-#endif
-
-#endif
 #ifndef __ASM_IA64_KVM_H
 #define __ASM_IA64_KVM_H
 
@@ -61,7 +21,7 @@
  *
  */
 
-#include <asm/types.h>
+#include <linux/types.h>
 #include <linux/ioctl.h>
 
 /* Select x86 specific features in <linux/kvm.h> */
@@ -100,6 +60,7 @@ struct kvm_ioapic_state {
 #define KVM_IRQCHIP_PIC_MASTER   0
 #define KVM_IRQCHIP_PIC_SLAVE    1
 #define KVM_IRQCHIP_IOAPIC       2
+#define KVM_NR_IRQCHIPS          3
 
 #define KVM_CONTEXT_SIZE	8*1024
 

@@ -3,6 +3,7 @@
 
 #include "qemu-common.h"
 #include "qemu-char.h"
+#include "qdict.h"
 #include "block.h"
 
 extern Monitor *cur_mon;
@@ -19,6 +20,8 @@ void monitor_resume(Monitor *mon);
 void monitor_read_bdrv_key_start(Monitor *mon, BlockDriverState *bs,
                                  BlockDriverCompletionFunc *completion_cb,
                                  void *opaque);
+
+int monitor_get_fd(Monitor *mon, const char *fdname);
 
 void monitor_vprintf(Monitor *mon, const char *fmt, va_list ap);
 void monitor_printf(Monitor *mon, const char *fmt, ...)

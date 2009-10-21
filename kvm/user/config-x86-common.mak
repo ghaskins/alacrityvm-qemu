@@ -11,6 +11,9 @@ cflatobjs += \
 	test/lib/x86/io.o \
 	test/lib/x86/smp.o
 
+cflatobjs += test/lib/x86/fwcfg.o
+cflatobjs += test/lib/x86/apic.o
+
 $(libcflat): LDFLAGS += -nostdlib
 $(libcflat): CFLAGS += -ffreestanding -I test/lib
 
@@ -32,8 +35,6 @@ $(TEST_DIR)/%.o: CFLAGS += -std=gnu99 -ffreestanding -I test/lib -I test/lib/x86
 $(TEST_DIR)/bootstrap: $(TEST_DIR)/bootstrap.o
 	$(CC) -nostdlib -o $@ -Wl,-T,bootstrap.lds $^
  
-$(TEST_DIR)/irq.flat: $(TEST_DIR)/print.o
- 
 $(TEST_DIR)/access.flat: $(cstart.o) $(TEST_DIR)/access.o $(TEST_DIR)/print.o
  
 $(TEST_DIR)/hypercall.flat: $(cstart.o) $(TEST_DIR)/hypercall.o $(TEST_DIR)/print.o
@@ -47,7 +48,8 @@ $(TEST_DIR)/test32.flat: $(TEST_DIR)/test32.o
 
 $(TEST_DIR)/smptest.flat: $(cstart.o) $(TEST_DIR)/smptest.o
  
-$(TEST_DIR)/emulator.flat: $(cstart.o) $(TEST_DIR)/vm.o $(TEST_DIR)/print.o
+$(TEST_DIR)/emulator.flat: $(cstart.o) $(TEST_DIR)/emulator.o \
+			   $(TEST_DIR)/vm.o $(TEST_DIR)/print.o
 
 $(TEST_DIR)/port80.flat: $(cstart.o) $(TEST_DIR)/port80.o
 
@@ -61,8 +63,16 @@ $(TEST_DIR)/realmode.flat: $(TEST_DIR)/realmode.o
 
 $(TEST_DIR)/realmode.o: bits = 32
 
+$(TEST_DIR)/memtest1.flat: $(TEST_DIR)/memtest1.o
+
+$(TEST_DIR)/stringio.flat: $(TEST_DIR)/stringio.o
+
+$(TEST_DIR)/simple.flat: $(TEST_DIR)/simple.o
+
 $(TEST_DIR)/msr.flat: $(cstart.o) $(TEST_DIR)/msr.o
 
 arch_clean:
 	$(RM) $(TEST_DIR)/bootstrap $(TEST_DIR)/*.o $(TEST_DIR)/*.flat \
 	$(TEST_DIR)/.*.d $(TEST_DIR)/lib/.*.d $(TEST_DIR)/lib/*.o
+
+-include $(TEST_DIR)/.*.d test/lib/.*.d test/lib/x86/.*.d

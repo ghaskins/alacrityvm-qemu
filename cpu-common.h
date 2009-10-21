@@ -10,12 +10,7 @@
 #include "bswap.h"
 
 /* address in the RAM (different from a physical address) */
-#ifdef CONFIG_KQEMU
-/* FIXME: This is wrong.  */
-typedef uint32_t ram_addr_t;
-#else
 typedef unsigned long ram_addr_t;
-#endif
 
 /* memory API */
 
@@ -39,10 +34,11 @@ void qemu_ram_free(ram_addr_t addr);
 /* This should only be used for ram local to a device.  */
 void *qemu_get_ram_ptr(ram_addr_t addr);
 /* This should not be used by devices.  */
+int do_qemu_ram_addr_from_host(void *ptr, ram_addr_t *ram_addr);
 ram_addr_t qemu_ram_addr_from_host(void *ptr);
 
-int cpu_register_io_memory(CPUReadMemoryFunc **mem_read,
-                           CPUWriteMemoryFunc **mem_write,
+int cpu_register_io_memory(CPUReadMemoryFunc * const *mem_read,
+                           CPUWriteMemoryFunc * const *mem_write,
                            void *opaque);
 void cpu_unregister_io_memory(int table_address);
 

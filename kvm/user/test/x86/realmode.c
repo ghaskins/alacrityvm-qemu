@@ -26,7 +26,7 @@ static void print_serial(const char *buf)
 {
 	unsigned long len = strlen(buf);
 
-	asm volatile ("addr32/rep/outsb" : "+S"(buf), "+c"(len) : "d"(0xf1));
+	asm volatile ("cld; addr32/rep/outsb" : "+S"(buf), "+c"(len) : "d"(0xf1));
 }
 
 static void exit(int code)
@@ -467,6 +467,79 @@ void test_long_jmp()
 	if(!regs_equal(&inregs, &outregs, R_AX) || outregs.eax != 0x1234)
 		print_serial("Long JMP Test: FAIL\n");
 }
+void test_push_pop()
+{
+	struct regs inregs = { 0 }, outregs;
+	MK_INSN(push32, "mov $0x12345678, %eax\n\t"
+			"push %eax\n\t"
+			"pop %ebx\n\t");
+	MK_INSN(push16, "mov $0x1234, %ax\n\t"
+			"push %ax\n\t"
+			"pop %bx\n\t");
+
+	MK_INSN(push_es, "mov $0x231, %bx\n\t" //Just write a dummy value to see if it gets overwritten
+			 "mov $0x123, %ax\n\t"
+			 "mov %ax, %es\n\t"
+			 "push %es\n\t"
+			 "pop %bx \n\t"
+			 );
+	MK_INSN(pop_es, "push %ax\n\t"
+			"pop %es\n\t"
+			"mov %es, %bx\n\t"
+			);
+	MK_INSN(push_pop_ss, "push %ss\n\t"
+			     "pushw %ax\n\t"
+			     "popw %ss\n\t"
+			     "mov %ss, %bx\n\t"
+			     "pop %ss\n\t"
+			);
+	MK_INSN(push_pop_fs, "push %fs\n\t"
+			     "pushl %eax\n\t"
+			     "popl %fs\n\t"
+			     "mov %fs, %ebx\n\t"
+			     "pop %fs\n\t"
+			);
+
+	exec_in_big_real_mode(&inregs, &outregs,
+			      insn_push32,
+			      insn_push32_end - insn_push32);
+	if (!regs_equal(&inregs, &outregs, R_AX|R_BX) || outregs.eax != outregs.ebx || outregs.eax != 0x12345678)
+		print_serial("Push/Pop Test 1: FAIL\n");
+
+	exec_in_big_real_mode(&inregs, &outregs,
+			      insn_push16,
+			      insn_push16_end - insn_push16);
+
+	if (!regs_equal(&inregs, &outregs, R_AX|R_BX) || outregs.eax != outregs.ebx || outregs.eax != 0x1234)
+		print_serial("Push/Pop Test 2: FAIL\n");
+
+	exec_in_big_real_mode(&inregs, &outregs,
+			      insn_push_es,
+			      insn_push_es_end - insn_push_es);
+	if (!regs_equal(&inregs, &outregs, R_AX|R_BX) ||  outregs.ebx != outregs.eax || outregs.eax != 0x123)
+		print_serial("Push/Pop Test 3: FAIL\n");
+
+	exec_in_big_real_mode(&inregs, &outregs,
+			      insn_pop_es,
+			      insn_pop_es_end - insn_pop_es);
+
+	if (!regs_equal(&inregs, &outregs, R_AX|R_BX) || outregs.ebx != outregs.eax)
+		print_serial("Push/Pop Test 4: FAIL\n");
+
+	exec_in_big_real_mode(&inregs, &outregs,
+			      insn_push_pop_ss,
+			      insn_push_pop_ss_end - insn_push_pop_ss);
+
+	if (!regs_equal(&inregs, &outregs, R_AX|R_BX) || outregs.ebx != outregs.eax)
+		print_serial("Push/Pop Test 5: FAIL\n");
+
+	exec_in_big_real_mode(&inregs, &outregs,
+			      insn_push_pop_fs,
+			      insn_push_pop_fs_end - insn_push_pop_fs);
+
+	if (!regs_equal(&inregs, &outregs, R_AX|R_BX) || outregs.ebx != outregs.eax)
+		print_serial("Push/Pop Test 6: FAIL\n");
+}
 
 void test_null(void)
 {
@@ -476,11 +549,12 @@ void test_null(void)
 		print_serial("null test: FAIL\n");
 }
 
-void start(void)
+void realmode_start(void)
 {
 	test_null();
 
 	test_shld();
+	test_push_pop();
 	test_mov_imm();
 	test_cmp_imm();
 	test_add_imm();
@@ -496,23 +570,55 @@ void start(void)
 	exit(0);
 }
 
+unsigned long long r_gdt[] = { 0, 0x9b000000ffff, 0x93000000ffff };
+
+struct __attribute__((packed)) {
+	unsigned short limit;
+	void *base;
+} r_gdt_descr = { sizeof(r_gdt) - 1, &r_gdt };
+
 asm(
+	".section .init \n\t"
+
+	".code32 \n\t"
+
+	"mb_magic = 0x1BADB002 \n\t"
+	"mb_flags = 0x0 \n\t"
+
+	"# multiboot header \n\t"
+	".long mb_magic, mb_flags, 0 - (mb_magic + mb_flags) \n\t"
+
+	".globl start \n\t"
 	".data \n\t"
 	". = . + 4096 \n\t"
 	"stacktop: \n\t"
+
 	".text \n\t"
-	"init: \n\t"
+	"start: \n\t"
+	"lgdt r_gdt_descr \n\t"
+	"ljmp $8, $1f; 1: \n\t"
+	".code16gcc \n\t"
+	"mov $16, %eax \n\t"
+	"mov %ax, %ds \n\t"
+	"mov %ax, %es \n\t"
+	"mov %ax, %fs \n\t"
+	"mov %ax, %gs \n\t"
+	"mov %ax, %ss \n\t"
+	"mov %cr0, %eax \n\t"
+	"btc $0, %eax \n\t"
+	"mov %eax, %cr0 \n\t"
+	"ljmp $0, $realmode_entry \n\t"
+
+	"realmode_entry: \n\t"
+
 	"xor %ax, %ax \n\t"
 	"mov %ax, %ds \n\t"
 	"mov %ax, %es \n\t"
 	"mov %ax, %ss \n\t"
-	"mov $0x4000, %cx \n\t"
-	"xor %esi, %esi \n\t"
-	"mov %esi, %edi \n\t"
-	"rep/addr32/cs/movsl \n\t"
+	"mov %ax, %fs \n\t"
+	"mov %ax, %gs \n\t"
 	"mov $stacktop, %sp\n\t"
-	"ljmp $0, $start \n\t"
-	".pushsection .boot, \"ax\" \n\t"
-	"ljmp $0xf000, $init \n\t"
-	".popsection"
+	"ljmp $0, $realmode_start \n\t"
+
+	".code16gcc \n\t"
 	);

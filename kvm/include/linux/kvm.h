@@ -1,43 +1,3 @@
-#ifndef KVM_UNIFDEF_H
-#define KVM_UNIFDEF_H
-
-#ifdef __i386__
-#ifndef CONFIG_X86_32
-#define CONFIG_X86_32 1
-#endif
-#endif
-
-#ifdef __x86_64__
-#ifndef CONFIG_X86_64
-#define CONFIG_X86_64 1
-#endif
-#endif
-
-#if defined(__i386__) || defined (__x86_64__)
-#ifndef CONFIG_X86
-#define CONFIG_X86 1
-#endif
-#endif
-
-#ifdef __ia64__
-#ifndef CONFIG_IA64
-#define CONFIG_IA64 1
-#endif
-#endif
-
-#ifdef __PPC__
-#ifndef CONFIG_PPC
-#define CONFIG_PPC 1
-#endif
-#endif
-
-#ifdef __s390__
-#ifndef CONFIG_S390
-#define CONFIG_S390 1
-#endif
-#endif
-
-#endif
 #ifndef __LINUX_KVM_H
 #define __LINUX_KVM_H
 
@@ -47,14 +7,14 @@
  * Note: you must update KVM_API_VERSION if you change this interface.
  */
 
-#include <asm/types.h>
-
+#include <linux/types.h>
+#include <linux/compiler.h>
 #include <linux/ioctl.h>
 #include <asm/kvm.h>
 
 #define KVM_API_VERSION 12
 
-/* for KVM_TRACE_ENABLE */
+/* for KVM_TRACE_ENABLE, deprecated */
 struct kvm_user_trace_setup {
 	__u32 buf_size; /* sub_buffer size of each per-cpu */
 	__u32 buf_nr; /* the number of sub_buffers of each per-cpu */
@@ -135,6 +95,10 @@ struct kvm_pit_config {
 #define KVM_EXIT_S390_RESET       14
 #define KVM_EXIT_DCR              15
 #define KVM_EXIT_NMI              16
+#define KVM_EXIT_INTERNAL_ERROR   17
+
+/* For KVM_EXIT_INTERNAL_ERROR */
+#define KVM_INTERNAL_ERROR_EMULATION 1
 
 /* for KVM_RUN, returned by mmap(vcpu_fd, offset=0) */
 struct kvm_run {
@@ -221,6 +185,9 @@ struct kvm_run {
 			__u32 data;
 			__u8  is_write;
 		} dcr;
+		struct {
+			__u32 suberror;
+		} internal;
 		/* Fix the size of the union. */
 		char padding[256];
 	};
@@ -274,7 +241,7 @@ struct kvm_dirty_log {
 	__u32 slot;
 	__u32 padding1;
 	union {
-		void   *dirty_bitmap; /* one bit per page */
+		void __user *dirty_bitmap; /* one bit per page */
 		__u64 padding2;
 	};
 };
@@ -341,10 +308,10 @@ struct kvm_guest_debug {
 };
 
 enum {
-       kvm_ioeventfd_flag_nr_datamatch,
-       kvm_ioeventfd_flag_nr_pio,
-       kvm_ioeventfd_flag_nr_deassign,
-       kvm_ioeventfd_flag_nr_max,
+	kvm_ioeventfd_flag_nr_datamatch,
+	kvm_ioeventfd_flag_nr_pio,
+	kvm_ioeventfd_flag_nr_deassign,
+	kvm_ioeventfd_flag_nr_max,
 };
 
 #define KVM_IOEVENTFD_FLAG_DATAMATCH (1 << kvm_ioeventfd_flag_nr_datamatch)
@@ -354,12 +321,12 @@ enum {
 #define KVM_IOEVENTFD_VALID_FLAG_MASK  ((1 << kvm_ioeventfd_flag_nr_max) - 1)
 
 struct kvm_ioeventfd {
-       __u64 datamatch;
-       __u64 addr;        /* legal pio/mmio address */
-       __u32 len;         /* 1, 2, 4, or 8 bytes    */
-       __s32 fd;
-       __u32 flags;
-       __u8  pad[36];
+	__u64 datamatch;
+	__u64 addr;        /* legal pio/mmio address */
+	__u32 len;         /* 1, 2, 4, or 8 bytes    */
+	__s32 fd;
+	__u32 flags;
+	__u8  pad[36];
 };
 
 #define KVM_TRC_SHIFT           16
@@ -379,35 +346,6 @@ struct kvm_ioeventfd {
 #define KVM_TRC_HEAD_SIZE       12
 #define KVM_TRC_CYCLE_SIZE      8
 #define KVM_TRC_EXTRA_MAX       7
-
-/* This structure represents a single trace buffer record. */
-struct kvm_trace_rec {
-	/* variable rec_val
-	 * is split into:
-	 * bits 0 - 27  -> event id
-	 * bits 28 -30  -> number of extra data args of size u32
-	 * bits 31      -> binary indicator for if tsc is in record
-	 */
-	__u32 rec_val;
-	__u32 pid;
-	__u32 vcpu_id;
-	union {
-		struct {
-			__u64 timestamp;
-			__u32 extra_u32[KVM_TRC_EXTRA_MAX];
-		} __attribute__((packed)) timestamp;
-		struct {
-			__u32 extra_u32[KVM_TRC_EXTRA_MAX];
-		} notimestamp;
-	} u;
-};
-
-#define TRACE_REC_EVENT_ID(val) \
-		(0x0fffffff & (val))
-#define TRACE_REC_NUM_DATA_ARGS(val) \
-		(0x70000000 & ((val) << 28))
-#define TRACE_REC_TCS(val) \
-		(0x80000000 & ((val) << 31))
 
 #define KVMIO 0xAE
 
@@ -485,9 +423,19 @@ struct kvm_trace_rec {
 #define KVM_CAP_ASSIGN_DEV_IRQ 29
 /* Another bug in KVM_SET_USER_MEMORY_REGION fixed: */
 #define KVM_CAP_JOIN_MEMORY_REGIONS_WORKS 30
+#ifdef __KVM_HAVE_MCE
+#define KVM_CAP_MCE 31
+#endif
 #define KVM_CAP_IRQFD 32
+#ifdef __KVM_HAVE_PIT
 #define KVM_CAP_PIT2 33
+#endif
+#define KVM_CAP_SET_BOOT_CPU_ID 34
+#ifdef __KVM_HAVE_PIT_STATE2
+#define KVM_CAP_PIT_STATE2 35
+#endif
 #define KVM_CAP_IOEVENTFD 36
+#define KVM_CAP_SET_IDENTITY_MAP_ADDR 37
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -527,24 +475,32 @@ struct kvm_irq_routing {
 
 #endif
 
+#ifdef KVM_CAP_MCE
+/* x86 MCE */
+struct kvm_x86_mce {
+	__u64 status;
+	__u64 addr;
+	__u64 misc;
+	__u64 mcg_status;
+	__u8 bank;
+	__u8 pad1[7];
+	__u64 pad2[3];
+};
+#endif
+
 #define KVM_IRQFD_FLAG_DEASSIGN (1 << 0)
 
 struct kvm_irqfd {
-       __u32 fd;
-       __u32 gsi;
-       __u32 flags;
-       __u8  pad[20];
+	__u32 fd;
+	__u32 gsi;
+	__u32 flags;
+	__u8  pad[20];
 };
 
 /*
  * ioctls for VM fds
  */
 #define KVM_SET_MEMORY_REGION     _IOW(KVMIO, 0x40, struct kvm_memory_region)
-#define KVM_SET_NR_MMU_PAGES      _IO(KVMIO, 0x44)
-#define KVM_GET_NR_MMU_PAGES      _IO(KVMIO, 0x45)
-#define KVM_SET_USER_MEMORY_REGION _IOW(KVMIO, 0x46,\
-					struct kvm_userspace_memory_region)
-#define KVM_SET_TSS_ADDR          _IO(KVMIO, 0x47)
 /*
  * KVM_CREATE_VCPU receives as a parameter the vcpu slot, and returns
  * a vcpu fd.
@@ -552,6 +508,12 @@ struct kvm_irqfd {
 #define KVM_CREATE_VCPU           _IO(KVMIO,  0x41)
 #define KVM_GET_DIRTY_LOG         _IOW(KVMIO, 0x42, struct kvm_dirty_log)
 #define KVM_SET_MEMORY_ALIAS      _IOW(KVMIO, 0x43, struct kvm_memory_alias)
+#define KVM_SET_NR_MMU_PAGES      _IO(KVMIO, 0x44)
+#define KVM_GET_NR_MMU_PAGES      _IO(KVMIO, 0x45)
+#define KVM_SET_USER_MEMORY_REGION _IOW(KVMIO, 0x46,\
+					struct kvm_userspace_memory_region)
+#define KVM_SET_TSS_ADDR          _IO(KVMIO, 0x47)
+#define KVM_SET_IDENTITY_MAP_ADDR _IOW(KVMIO, 0x48, __u64)
 /* Device model IOC */
 #define KVM_CREATE_IRQCHIP	  _IO(KVMIO,  0x60)
 #define KVM_IRQ_LINE		  _IOW(KVMIO, 0x61, struct kvm_irq_level)
@@ -582,7 +544,8 @@ struct kvm_irqfd {
 #define KVM_DEASSIGN_DEV_IRQ       _IOW(KVMIO, 0x75, struct kvm_assigned_irq)
 #define KVM_IRQFD                  _IOW(KVMIO, 0x76, struct kvm_irqfd)
 #define KVM_CREATE_PIT2		   _IOW(KVMIO, 0x77, struct kvm_pit_config)
-#define KVM_IOEVENTFD              _IOW(KVMIO, 0x79, struct kvm_ioeventfd)
+#define KVM_SET_BOOT_CPU_ID        _IO(KVMIO, 0x78)
+#define KVM_IOEVENTFD             _IOW(KVMIO, 0x79, struct kvm_ioeventfd)
 
 /*
  * ioctls for vcpu fds
@@ -626,6 +589,10 @@ struct kvm_irqfd {
 #define KVM_NMI                   _IO(KVMIO,  0x9a)
 /* Available with KVM_CAP_SET_GUEST_DEBUG */
 #define KVM_SET_GUEST_DEBUG       _IOW(KVMIO,  0x9b, struct kvm_guest_debug)
+/* MCE for x86 */
+#define KVM_X86_SETUP_MCE         _IOW(KVMIO,  0x9c, __u64)
+#define KVM_X86_GET_MCE_CAP_SUPPORTED _IOR(KVMIO,  0x9d, __u64)
+#define KVM_X86_SET_MCE           _IOW(KVMIO,  0x9e, struct kvm_x86_mce)
 
 /*
  * Deprecated interfaces
@@ -647,6 +614,9 @@ struct kvm_debug_guest {
 
 #define KVM_IA64_VCPU_GET_STACK   _IOR(KVMIO,  0x9a, void *)
 #define KVM_IA64_VCPU_SET_STACK   _IOW(KVMIO,  0x9b, void *)
+
+#define KVM_GET_PIT2   _IOR(KVMIO,   0x9f, struct kvm_pit_state2)
+#define KVM_SET_PIT2   _IOW(KVMIO,   0xa0, struct kvm_pit_state2)
 
 #define KVM_TRC_INJ_VIRQ         (KVM_TRC_HANDLER + 0x02)
 #define KVM_TRC_REDELIVER_EVT    (KVM_TRC_HANDLER + 0x03)
@@ -718,7 +688,7 @@ struct kvm_assigned_msix_nr {
 	__u16 padding;
 };
 
-#define KVM_MAX_MSIX_PER_DEV		512
+#define KVM_MAX_MSIX_PER_DEV		256
 struct kvm_assigned_msix_entry {
 	__u32 assigned_dev_id;
 	__u32 gsi;

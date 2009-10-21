@@ -15,8 +15,8 @@
 #define QEMU_KVM_H
 
 #include "config.h"
-#include "sys-queue.h"
-#include "libkvm-all.h"
+#include "qemu-queue.h"
+#include "qemu-kvm.h"
 
 #ifdef KVM_UPSTREAM
 
@@ -63,6 +63,9 @@ int kvm_remove_breakpoint(CPUState *current_env, target_ulong addr,
 void kvm_remove_all_breakpoints(CPUState *current_env);
 int kvm_update_guest_debug(CPUState *env, unsigned long reinject_trap);
 
+int kvm_pit_in_kernel(void);
+int kvm_irqchip_in_kernel(void);
+
 /* internal API */
 
 struct KVMState;
@@ -100,10 +103,10 @@ struct kvm_sw_breakpoint {
     target_ulong pc;
     target_ulong saved_insn;
     int use_count;
-    TAILQ_ENTRY(kvm_sw_breakpoint) entry;
+    QTAILQ_ENTRY(kvm_sw_breakpoint) entry;
 };
 
-TAILQ_HEAD(kvm_sw_breakpoint_head, kvm_sw_breakpoint);
+QTAILQ_HEAD(kvm_sw_breakpoint_head, kvm_sw_breakpoint);
 
 int kvm_arch_debug(struct kvm_debug_exit_arch *arch_info);
 
@@ -128,16 +131,14 @@ int kvm_check_extension(KVMState *s, unsigned int extension);
 
 uint32_t kvm_arch_get_supported_cpuid(CPUState *env, uint32_t function,
                                       int reg);
+void kvm_cpu_synchronize_state(CPUState *env);
 
 /* generic hooks - to be moved/refactored once there are more users */
 
-static inline void cpu_synchronize_state(CPUState *env, int modified)
+static inline void cpu_synchronize_state(CPUState *env)
 {
     if (kvm_enabled()) {
-        if (modified)
-            kvm_arch_put_registers(env);
-        else
-            kvm_arch_get_registers(env);
+        kvm_cpu_synchronize_state(env);
     }
 }
 

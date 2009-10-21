@@ -21,8 +21,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "hw.h"
+
 #include "sun4m.h"
+#include "sysbus.h"
 
 /* debug iommu */
 //#define DEBUG_IOMMU
@@ -127,6 +128,7 @@
 #define IOMMU_PAGE_MASK     ~(IOMMU_PAGE_SIZE - 1)
 
 typedef struct IOMMUState {
+    SysBusDevice busdev;
     uint32_t regs[IOMMU_NREGS];
     target_phys_addr_t iostart;
     uint32_t version;
@@ -236,13 +238,13 @@ static void iommu_mem_writel(void *opaque, target_phys_addr_t addr,
     }
 }
 
-static CPUReadMemoryFunc *iommu_mem_read[3] = {
+static CPUReadMemoryFunc * const iommu_mem_read[3] = {
     NULL,
     NULL,
     iommu_mem_readl,
 };
 
-static CPUWriteMemoryFunc *iommu_mem_write[3] = {
+static CPUWriteMemoryFunc * const iommu_mem_write[3] = {
     NULL,
     NULL,
     iommu_mem_writel,
@@ -326,30 +328,17 @@ void sparc_iommu_memory_rw(void *opaque, target_phys_addr_t addr,
     }
 }
 
-static void iommu_save(QEMUFile *f, void *opaque)
-{
-    IOMMUState *s = opaque;
-    int i;
-
-    for (i = 0; i < IOMMU_NREGS; i++)
-        qemu_put_be32s(f, &s->regs[i]);
-    qemu_put_be64s(f, &s->iostart);
-}
-
-static int iommu_load(QEMUFile *f, void *opaque, int version_id)
-{
-    IOMMUState *s = opaque;
-    int i;
-
-    if (version_id != 2)
-        return -EINVAL;
-
-    for (i = 0; i < IOMMU_NREGS; i++)
-        qemu_get_be32s(f, &s->regs[i]);
-    qemu_get_be64s(f, &s->iostart);
-
-    return 0;
-}
+static const VMStateDescription vmstate_iommu = {
+    .name ="iommu",
+    .version_id = 2,
+    .minimum_version_id = 2,
+    .minimum_version_id_old = 2,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT32_ARRAY(regs, IOMMUState, IOMMU_NREGS),
+        VMSTATE_UINT64(iostart, IOMMUState),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
 static void iommu_reset(void *opaque)
 {
@@ -364,22 +353,35 @@ static void iommu_reset(void *opaque)
     s->regs[IOMMU_MASK_ID] = IOMMU_TS_MASK;
 }
 
-void *iommu_init(target_phys_addr_t addr, uint32_t version, qemu_irq irq)
+static int iommu_init1(SysBusDevice *dev)
 {
-    IOMMUState *s;
-    int iommu_io_memory;
+    IOMMUState *s = FROM_SYSBUS(IOMMUState, dev);
+    int io;
 
-    s = qemu_mallocz(sizeof(IOMMUState));
+    sysbus_init_irq(dev, &s->irq);
 
-    s->version = version;
-    s->irq = irq;
+    io = cpu_register_io_memory(iommu_mem_read, iommu_mem_write, s);
+    sysbus_init_mmio(dev, IOMMU_NREGS * sizeof(uint32_t), io);
 
-    iommu_io_memory = cpu_register_io_memory(iommu_mem_read,
-                                             iommu_mem_write, s);
-    cpu_register_physical_memory(addr, IOMMU_NREGS * 4, iommu_io_memory);
-
-    register_savevm("iommu", addr, 2, iommu_save, iommu_load, s);
+    vmstate_register(-1, &vmstate_iommu, s);
     qemu_register_reset(iommu_reset, s);
     iommu_reset(s);
-    return s;
+    return 0;
 }
+
+static SysBusDeviceInfo iommu_info = {
+    .init = iommu_init1,
+    .qdev.name  = "iommu",
+    .qdev.size  = sizeof(IOMMUState),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_HEX32("version", IOMMUState, version, 0),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
+
+static void iommu_register_devices(void)
+{
+    sysbus_register_withprop(&iommu_info);
+}
+
+device_init(iommu_register_devices)

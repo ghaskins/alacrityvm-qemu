@@ -15,8 +15,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ * with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "hw.h"
@@ -291,7 +290,7 @@ static void tsc2005_pin_update(TSC2005State *s)
     s->precision = s->nextprecision;
     s->function = s->nextfunction;
     s->pdst = !s->pnd0;	/* Synchronised on internal clock */
-    expires = qemu_get_clock(vm_clock) + (ticks_per_sec >> 7);
+    expires = qemu_get_clock(vm_clock) + (get_ticks_per_sec() >> 7);
     qemu_mod_timer(s->timer, expires);
 }
 

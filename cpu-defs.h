@@ -14,8 +14,7 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA  02110-1301 USA
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #ifndef CPU_DEFS_H
 #define CPU_DEFS_H
@@ -30,7 +29,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include "osdep.h"
-#include "sys-queue.h"
+#include "qemu-queue.h"
 #include "targphys.h"
 
 #ifndef TARGET_LONG_BITS
@@ -108,7 +107,7 @@ typedef struct CPUTLBEntry {
                    sizeof(target_phys_addr_t))];
 } CPUTLBEntry;
 
-#ifdef WORDS_BIGENDIAN
+#ifdef HOST_WORDS_BIGENDIAN
 typedef struct icount_decr_u16 {
     uint16_t high;
     uint16_t low;
@@ -126,14 +125,14 @@ struct KVMState;
 typedef struct CPUBreakpoint {
     target_ulong pc;
     int flags; /* BP_* */
-    TAILQ_ENTRY(CPUBreakpoint) entry;
+    QTAILQ_ENTRY(CPUBreakpoint) entry;
 } CPUBreakpoint;
 
 typedef struct CPUWatchpoint {
     target_ulong vaddr;
     target_ulong len_mask;
     int flags; /* BP_* */
-    TAILQ_ENTRY(CPUWatchpoint) entry;
+    QTAILQ_ENTRY(CPUWatchpoint) entry;
 } CPUWatchpoint;
 
 /* forward decleration */
@@ -142,11 +141,9 @@ struct qemu_work_item;
 struct KVMCPUState {
     pthread_t thread;
     int signalled;
-    int stop;
-    int stopped;
-    int created;
     void *vcpu_ctx;
     struct qemu_work_item *queued_work_first, *queued_work_last;
+    int regs_modified;
 };
 
 #define CPU_TEMP_BUF_NLONGS 128
@@ -161,8 +158,6 @@ struct KVMCPUState {
     target_ulong mem_io_vaddr; /* target virtual addr at which the      \
                                      memory was accessed */             \
     uint32_t halted; /* Nonzero if the CPU is in suspend state */       \
-    uint32_t stop;   /* Stop request */                                 \
-    uint32_t stopped; /* Artificially stopped */                        \
     uint32_t interrupt_request;                                         \
     volatile sig_atomic_t exit_request;                                 \
     /* The meaning of the MMU modes is defined in the target code. */   \
@@ -184,10 +179,10 @@ struct KVMCPUState {
                                                                         \
     /* from this point: preserved by CPU reset */                       \
     /* ice debug support */                                             \
-    TAILQ_HEAD(breakpoints_head, CPUBreakpoint) breakpoints;            \
+    QTAILQ_HEAD(breakpoints_head, CPUBreakpoint) breakpoints;            \
     int singlestep_enabled;                                             \
                                                                         \
-    TAILQ_HEAD(watchpoints_head, CPUWatchpoint) watchpoints;            \
+    QTAILQ_HEAD(watchpoints_head, CPUWatchpoint) watchpoints;            \
     CPUWatchpoint *watchpoint_hit;                                      \
                                                                         \
     struct GDBRegisterState *gdb_regs;                                  \
@@ -200,6 +195,8 @@ struct KVMCPUState {
     int cpu_index; /* CPU index (informative) */                        \
     uint32_t host_tid; /* host thread ID */                             \
     int numa_node; /* NUMA node this cpu is belonging to  */            \
+    int nr_cores;  /* number of cores within this CPU package */        \
+    int nr_threads;/* number of threads within this CPU */              \
     int running; /* Nonzero if cpu is currently running(usermode).  */  \
     int thread_id;							\
     /* user data */                                                     \
@@ -212,6 +209,8 @@ struct KVMCPUState {
     struct KVMState *kvm_state;                                         \
     struct kvm_run *kvm_run;                                            \
     int kvm_fd;                                                         \
+    uint32_t stop;   /* Stop request */                                 \
+    uint32_t stopped; /* Artificially stopped */                        \
     struct KVMCPUState kvm_cpu_state;
 
 #endif

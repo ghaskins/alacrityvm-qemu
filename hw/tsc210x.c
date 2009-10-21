@@ -16,8 +16,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ * with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "hw.h"
@@ -332,7 +331,7 @@ static void tsc2102_audio_output_update(TSC210xState *s)
         s->codec.out.size = 0;
         AUD_set_active_out(s->dac_voice[0], 0);
         AUD_close_out(&s->card, s->dac_voice[0]);
-        s->dac_voice[0] = 0;
+        s->dac_voice[0] = NULL;
     }
     s->codec.cts = 0;
 
@@ -865,7 +864,7 @@ static void tsc210x_pin_update(TSC210xState *s)
     s->busy = 1;
     s->precision = s->nextprecision;
     s->function = s->nextfunction;
-    expires = qemu_get_clock(vm_clock) + (ticks_per_sec >> 10);
+    expires = qemu_get_clock(vm_clock) + (get_ticks_per_sec() >> 10);
     qemu_mod_timer(s->timer, expires);
 }
 

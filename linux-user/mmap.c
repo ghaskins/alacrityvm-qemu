@@ -14,9 +14,7 @@
  *  GNU General Public License for more details.
  *
  *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston,
- *  MA 02110-1301, USA.
+ *  along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 #include <stdlib.h>
 #include <stdio.h>
@@ -35,9 +33,9 @@
 
 //#define DEBUG_MMAP
 
-#if defined(USE_NPTL)
-pthread_mutex_t mmap_mutex = PTHREAD_MUTEX_INITIALIZER;
-static int __thread mmap_lock_count;
+#if defined(CONFIG_USE_NPTL)
+static pthread_mutex_t mmap_mutex = PTHREAD_MUTEX_INITIALIZER;
+static __thread int mmap_lock_count;
 
 void mmap_lock(void)
 {
@@ -147,8 +145,8 @@ int target_mprotect(abi_ulong start, abi_ulong len, int prot)
     int prot1, ret;
 
 #ifdef DEBUG_MMAP
-    printf("mprotect: start=0x" TARGET_FMT_lx
-           "len=0x" TARGET_FMT_lx " prot=%c%c%c\n", start, len,
+    printf("mprotect: start=0x" TARGET_ABI_FMT_lx
+           "len=0x" TARGET_ABI_FMT_lx " prot=%c%c%c\n", start, len,
            prot & PROT_READ ? 'r' : '-',
            prot & PROT_WRITE ? 'w' : '-',
            prot & PROT_EXEC ? 'x' : '-');
@@ -275,52 +273,59 @@ static abi_ulong mmap_next_start = 0x40000000;
 
 unsigned long last_brk;
 
-/* find a free memory area of size 'size'. The search starts at
-   'start'. If 'start' == 0, then a default start address is used.
-   Return -1 if error.
-*/
-/* page_init() marks pages used by the host as reserved to be sure not
-   to use them. */
+/*
+ * Find and reserve a free memory area of size 'size'. The search
+ * starts at 'start'.
+ * It must be called with mmap_lock() held.
+ * Return -1 if error.
+ */
 abi_ulong mmap_find_vma(abi_ulong start, abi_ulong size)
 {
-    abi_ulong addr, addr1, addr_start;
-    int prot;
-    unsigned long new_brk;
-
-    new_brk = (unsigned long)sbrk(0);
-    if (last_brk && last_brk < new_brk && last_brk == (target_ulong)last_brk) {
-        /* This is a hack to catch the host allocating memory with brk().
-           If it uses mmap then we loose.
-           FIXME: We really want to avoid the host allocating memory in
-           the first place, and maybe leave some slack to avoid switching
-           to mmap.  */
-        page_set_flags(last_brk & TARGET_PAGE_MASK,
-                       TARGET_PAGE_ALIGN(new_brk),
-                       PAGE_RESERVED); 
-    }
-    last_brk = new_brk;
+    void *ptr;
+    abi_ulong addr;
 
     size = HOST_PAGE_ALIGN(size);
-    start = start & qemu_host_page_mask;
+    start &= qemu_host_page_mask;
+
+    /* If 'start' == 0, then a default start address is used. */
+    if (start == 0)
+        start = mmap_next_start;
+
     addr = start;
-    if (addr == 0)
-        addr = mmap_next_start;
-    addr_start = addr;
+
     for(;;) {
-        prot = 0;
-        for(addr1 = addr; addr1 < (addr + size); addr1 += TARGET_PAGE_SIZE) {
-            prot |= page_get_flags(addr1);
-        }
-        if (prot == 0)
+        /*
+         * Reserve needed memory area to avoid a race.
+         * It should be discarded using:
+         *  - mmap() with MAP_FIXED flag
+         *  - mremap() with MREMAP_FIXED flag
+         *  - shmat() with SHM_REMAP flag
+         */
+        ptr = mmap((void *)(unsigned long)addr, size, PROT_NONE,
+                   MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE, -1, 0);
+
+        /* ENOMEM, if host address space has no memory */
+        if (ptr == MAP_FAILED)
+            return (abi_ulong)-1;
+
+        /* If address fits target address space we've found what we need */
+        if ((unsigned long)ptr + size - 1 <= (abi_ulong)-1)
             break;
+
+        /* Unmap and try again with new page */
+        munmap(ptr, size);
         addr += qemu_host_page_size;
-        /* we found nothing */
-        if (addr == addr_start)
+
+        /* ENOMEM if we check whole of target address space */
+        if (addr == start)
             return (abi_ulong)-1;
     }
-    if (start == 0)
-        mmap_next_start = addr + size;
-    return addr;
+
+    /* Update default start address */
+    if (start == mmap_next_start)
+        mmap_next_start = (unsigned long)ptr + size;
+
+    return h2g(ptr);
 }
 
 /* NOTE: all the constants are the HOST ones */
@@ -333,8 +338,8 @@ abi_long target_mmap(abi_ulong start, abi_ulong len, int prot,
     mmap_lock();
 #ifdef DEBUG_MMAP
     {
-        printf("mmap: start=0x" TARGET_FMT_lx
-               " len=0x" TARGET_FMT_lx " prot=%c%c%c flags=",
+        printf("mmap: start=0x" TARGET_ABI_FMT_lx
+               " len=0x" TARGET_ABI_FMT_lx " prot=%c%c%c flags=",
                start, len,
                prot & PROT_READ ? 'r' : '-',
                prot & PROT_WRITE ? 'w' : '-',
@@ -354,7 +359,7 @@ abi_long target_mmap(abi_ulong start, abi_ulong len, int prot,
             printf("[MAP_TYPE=0x%x] ", flags & MAP_TYPE);
             break;
         }
-        printf("fd=%d offset=" TARGET_FMT_lx "\n", fd, offset);
+        printf("fd=%d offset=" TARGET_ABI_FMT_lx "\n", fd, offset);
     }
 #endif
 
@@ -525,7 +530,7 @@ abi_long target_mmap(abi_ulong start, abi_ulong len, int prot,
     page_set_flags(start, start + len, prot | PAGE_VALID);
  the_end:
 #ifdef DEBUG_MMAP
-    printf("ret=0x" TARGET_FMT_lx "\n", start);
+    printf("ret=0x" TARGET_ABI_FMT_lx "\n", start);
     page_dump(stdout);
     printf("\n");
 #endif
@@ -542,7 +547,9 @@ int target_munmap(abi_ulong start, abi_ulong len)
     int prot, ret;
 
 #ifdef DEBUG_MMAP
-    printf("munmap: start=0x%lx len=0x%lx\n", start, len);
+    printf("munmap: start=0x" TARGET_ABI_FMT_lx " len=0x"
+           TARGET_ABI_FMT_lx "\n",
+           start, len);
 #endif
     if (start & ~TARGET_PAGE_MASK)
         return -EINVAL;

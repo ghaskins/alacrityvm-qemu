@@ -1,18 +1,20 @@
 #ifndef QEMU_NET_H
 #define QEMU_NET_H
 
+#include "qemu-queue.h"
 #include "qemu-common.h"
+#include "qdict.h"
+#include "qemu-option.h"
+#include "net-queue.h"
 
 /* VLANs support */
-
-typedef struct VLANClientState VLANClientState;
 
 typedef int (NetCanReceive)(VLANClientState *);
 typedef ssize_t (NetReceive)(VLANClientState *, const uint8_t *, size_t);
 typedef ssize_t (NetReceiveIOV)(VLANClientState *, const struct iovec *, int);
 typedef void (NetCleanup) (VLANClientState *);
 typedef void (LinkStatusChanged)(VLANClientState *);
-typedef void (SetOffload)(VLANClientState *, int, int, int, int);
+typedef void (SetOffload)(VLANClientState *, int, int, int, int, int);
 
 struct VLANClientState {
     NetReceive *receive;
@@ -26,37 +28,26 @@ struct VLANClientState {
     int link_down;
     SetOffload *set_offload;
     void *opaque;
-    struct VLANClientState *next;
+    QTAILQ_ENTRY(VLANClientState) next;
     struct VLANState *vlan;
+    VLANClientState *peer;
+    NetQueue *send_queue;
     char *model;
     char *name;
     char info_str[256];
 };
 
-typedef struct VLANPacket VLANPacket;
-
-typedef void (NetPacketSent) (VLANClientState *, ssize_t);
-
-struct VLANPacket {
-    struct VLANPacket *next;
-    VLANClientState *sender;
-    int size;
-    int raw;
-    NetPacketSent *sent_cb;
-    uint8_t data[0];
-};
-
 struct VLANState {
     int id;
-    VLANClientState *first_client;
-    struct VLANState *next;
+    QTAILQ_HEAD(, VLANClientState) clients;
+    QTAILQ_ENTRY(VLANState) next;
     unsigned int nb_guest_devs, nb_host_devs;
-    VLANPacket *send_queue;
-    int delivering;
+    NetQueue *send_queue;
 };
 
 VLANState *qemu_find_vlan(int id, int allocate);
 VLANClientState *qemu_new_vlan_client(VLANState *vlan,
+                                      VLANClientState *peer,
                                       const char *model,
                                       const char *name,
                                       NetCanReceive *can_receive,
@@ -78,18 +69,19 @@ ssize_t qemu_send_packet_async(VLANClientState *vc, const uint8_t *buf,
 void qemu_purge_queued_packets(VLANClientState *vc);
 void qemu_flush_queued_packets(VLANClientState *vc);
 void qemu_format_nic_info_str(VLANClientState *vc, uint8_t macaddr[6]);
+int qemu_show_nic_models(const char *arg, const char *const *models);
 void qemu_check_nic_model(NICInfo *nd, const char *model);
-void qemu_check_nic_model_list(NICInfo *nd, const char * const *models,
-                               const char *default_model);
-void qemu_handler_true(void *opaque);
+int qemu_find_nic_model(NICInfo *nd, const char * const *models,
+                        const char *default_model);
 
 void do_info_network(Monitor *mon);
-int do_set_link(Monitor *mon, const char *name, const char *up_or_down);
+void do_set_link(Monitor *mon, const QDict *qdict);
 
 void do_info_usernet(Monitor *mon);
 
 int tap_has_vnet_hdr(void *opaque);
 void tap_using_vnet_hdr(void *opaque, int using_vnet_hdr);
+int tap_has_ufo(void *opaque);
 
 /* NIC info */
 
@@ -100,10 +92,12 @@ enum {
 
 struct NICInfo {
     uint8_t macaddr[6];
-    const char *model;
-    const char *name;
-    const char *devaddr;
+    char *model;
+    char *name;
+    char *devaddr;
     VLANState *vlan;
+    VLANClientState *netdev;
+    VLANClientState *vc;
     void *private;
     int used;
     int bootable;
@@ -138,20 +132,18 @@ void net_checksum_calculate(uint8_t *data, int length);
 extern const char *legacy_tftp_prefix;
 extern const char *legacy_bootp_filename;
 
-int net_client_init(Monitor *mon, const char *device, const char *p);
+int net_client_init(Monitor *mon, QemuOpts *opts, int is_netdev);
 void net_client_uninit(NICInfo *nd);
-int net_client_parse(const char *str);
-void net_slirp_smb(const char *exported_dir);
-void net_slirp_hostfwd_add(Monitor *mon, const char *arg1,
-                           const char *arg2, const char *arg3);
-void net_slirp_hostfwd_remove(Monitor *mon, const char *arg1,
-                              const char *arg2, const char *arg3);
-void net_slirp_redir(const char *redir_str);
+int net_client_parse(QemuOptsList *opts_list, const char *str);
+int net_init_clients(void);
+int net_slirp_smb(const char *exported_dir);
+void net_slirp_hostfwd_add(Monitor *mon, const QDict *qdict);
+void net_slirp_hostfwd_remove(Monitor *mon, const QDict *qdict);
+int net_slirp_redir(const char *redir_str);
 void net_cleanup(void);
-void net_client_check(void);
 void net_set_boot_mask(int boot_mask);
-void net_host_device_add(Monitor *mon, const char *device, const char *opts);
-void net_host_device_remove(Monitor *mon, int vlan_id, const char *device);
+void net_host_device_add(Monitor *mon, const QDict *qdict);
+void net_host_device_remove(Monitor *mon, const QDict *qdict);
 
 #define DEFAULT_NETWORK_SCRIPT "/etc/qemu-ifup"
 #define DEFAULT_NETWORK_DOWN_SCRIPT "/etc/qemu-ifdown"

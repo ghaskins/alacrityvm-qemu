@@ -7,6 +7,8 @@
  * This code is licenced under the GPL.
  */
 
+#include "hw.h"
+#include "qemu-timer.h"
 #include "sysbus.h"
 #include "primecell.h"
 #include "sysemu.h"
@@ -71,8 +73,7 @@ static uint32_t arm_sysctl_read(void *opaque, target_phys_addr_t offset)
     case 0x58: /* BOOTCS */
         return 0;
     case 0x5c: /* 24MHz */
-        /* ??? not implemented.  */
-        return 0;
+        return muldiv64(qemu_get_clock(vm_clock), 24000000, get_ticks_per_sec());
     case 0x60: /* MISC */
         return 0;
     case 0x84: /* PROCID0 */
@@ -177,24 +178,23 @@ static void arm_sysctl_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static CPUReadMemoryFunc *arm_sysctl_readfn[] = {
+static CPUReadMemoryFunc * const arm_sysctl_readfn[] = {
    arm_sysctl_read,
    arm_sysctl_read,
    arm_sysctl_read
 };
 
-static CPUWriteMemoryFunc *arm_sysctl_writefn[] = {
+static CPUWriteMemoryFunc * const arm_sysctl_writefn[] = {
    arm_sysctl_write,
    arm_sysctl_write,
    arm_sysctl_write
 };
 
-static void arm_sysctl_init1(SysBusDevice *dev)
+static int arm_sysctl_init1(SysBusDevice *dev)
 {
     arm_sysctl_state *s = FROM_SYSBUS(arm_sysctl_state, dev);
     int iomemtype;
 
-    s->sys_id = qdev_get_prop_int(&dev->qdev, "sys_id", 0);
     /* The MPcore bootloader uses these flags to start secondary CPUs.
        We don't use a bootloader, so do this here.  */
     s->flags = 3;
@@ -202,6 +202,7 @@ static void arm_sysctl_init1(SysBusDevice *dev)
                                        arm_sysctl_writefn, s);
     sysbus_init_mmio(dev, 0x1000, iomemtype);
     /* ??? Save/restore.  */
+    return 0;
 }
 
 /* Legacy helper function.  */
@@ -210,15 +211,24 @@ void arm_sysctl_init(uint32_t base, uint32_t sys_id)
     DeviceState *dev;
 
     dev = qdev_create(NULL, "realview_sysctl");
-    qdev_set_prop_int(dev, "sys_id", sys_id);
-    qdev_init(dev);
+    qdev_prop_set_uint32(dev, "sys_id", sys_id);
+    qdev_init_nofail(dev);
     sysbus_mmio_map(sysbus_from_qdev(dev), 0, base);
 }
 
+static SysBusDeviceInfo arm_sysctl_info = {
+    .init = arm_sysctl_init1,
+    .qdev.name  = "realview_sysctl",
+    .qdev.size  = sizeof(arm_sysctl_state),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_UINT32("sys_id", arm_sysctl_state, sys_id, 0),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
+
 static void arm_sysctl_register_devices(void)
 {
-    sysbus_register_dev("realview_sysctl", sizeof(arm_sysctl_state),
-                        arm_sysctl_init1);
+    sysbus_register_withprop(&arm_sysctl_info);
 }
 
 device_init(arm_sysctl_register_devices)

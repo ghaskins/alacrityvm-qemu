@@ -64,6 +64,7 @@ extern target_phys_addr_t pci_mem_base;
 
 /* Intel (0x8086) */
 #define PCI_DEVICE_ID_INTEL_82551IT      0x1209
+#define PCI_DEVICE_ID_INTEL_82557        0x1229
 
 /* Red Hat / Qumranet (for QEMU) -- see pci-ids.txt */
 #define PCI_VENDOR_ID_REDHAT_QUMRANET    0x1af4
@@ -130,6 +131,8 @@ typedef struct PCIIORegion {
 #define PCI_SEC_STATUS		0x1e	/* Secondary status register, only bit 14 used */
 #define PCI_SUBSYSTEM_VENDOR_ID 0x2c    /* 16 bits */
 #define PCI_SUBSYSTEM_ID        0x2e    /* 16 bits */
+#define PCI_ROM_ADDRESS		0x30	/* Bits 31..11 are address, 10..1 reserved */
+#define  PCI_ROM_ADDRESS_ENABLE	0x01
 #define PCI_CAPABILITY_LIST	0x34	/* Offset of first capability list entry */
 #define PCI_INTERRUPT_LINE	0x3c	/* 8 bits */
 #define PCI_INTERRUPT_PIN	0x3d	/* 8 bits */
@@ -205,14 +208,13 @@ struct PCIDevice {
 
     /* the following fields are read only */
     PCIBus *bus;
-    int devfn;
+    uint32_t devfn;
     char name[64];
     PCIIORegion io_regions[PCI_NUM_REGIONS];
 
     /* do not access the following fields */
     PCIConfigReadFunc *config_read;
     PCIConfigWriteFunc *config_write;
-    PCIUnregisterFunc *unregister;
 
     /* IRQ objects for the INTA-INTD pins.  */
     qemu_irq *irq;
@@ -237,6 +239,15 @@ struct PCIDevice {
     unsigned *msix_entry_used;
     /* Region including the MSI-X table */
     uint32_t msix_bar_size;
+    /* Version id needed for VMState */
+    int32_t version_id;
+    /* How much space does an MSIX table need. */
+    /* The spec requires giving the table structure
+     * a 4K aligned region all by itself. Align it to
+     * target pages so that drivers can do passthrough
+     * on the rest of the region. */
+    target_phys_addr_t msix_page_size;
+
     struct kvm_irq_routing_entry *msix_irq_entries;
 
     /* Device capability configuration space */
@@ -252,7 +263,6 @@ PCIDevice *pci_register_device(PCIBus *bus, const char *name,
                                int instance_size, int devfn,
                                PCIConfigReadFunc *config_read,
                                PCIConfigWriteFunc *config_write);
-int pci_unregister_device(PCIDevice *pci_dev, int assigned);
 
 void pci_register_bar(PCIDevice *pci_dev, int region_num,
                             uint32_t size, int type,
@@ -286,27 +296,36 @@ void pci_default_cap_write_config(PCIDevice *pci_dev,
                                   uint32_t address, uint32_t val, int len);
 int pci_access_cap_config(PCIDevice *pci_dev, uint32_t address, int len);
 
-typedef void (*pci_set_irq_fn)(qemu_irq *pic, int irq_num, int level);
+typedef void (*pci_set_irq_fn)(void *opaque, int irq_num, int level);
 typedef int (*pci_map_irq_fn)(PCIDevice *pci_dev, int irq_num);
+typedef int (*pci_hotplug_fn)(PCIDevice *pci_dev, int state);
+void pci_bus_new_inplace(PCIBus *bus, DeviceState *parent,
+                         const char *name, int devfn_min);
+PCIBus *pci_bus_new(DeviceState *parent, const char *name, int devfn_min);
+void pci_bus_irqs(PCIBus *bus, pci_set_irq_fn set_irq, pci_map_irq_fn map_irq,
+                  void *irq_opaque, int nirq);
+void pci_bus_hotplug(PCIBus *bus, pci_hotplug_fn hotplug);
 PCIBus *pci_register_bus(DeviceState *parent, const char *name,
                          pci_set_irq_fn set_irq, pci_map_irq_fn map_irq,
-                         qemu_irq *pic, int devfn_min, int nirq);
+                         void *irq_opaque, int devfn_min, int nirq);
 
 PCIDevice *pci_nic_init(NICInfo *nd, const char *default_model,
                         const char *default_devaddr);
+PCIDevice *pci_nic_init_nofail(NICInfo *nd, const char *default_model,
+                               const char *default_devaddr);
 void pci_data_write(void *opaque, uint32_t addr, uint32_t val, int len);
 uint32_t pci_data_read(void *opaque, uint32_t addr, int len);
 int pci_bus_num(PCIBus *s);
 void pci_for_each_device(int bus_num, void (*fn)(PCIDevice *d));
 PCIBus *pci_find_bus(int bus_num);
 PCIDevice *pci_find_device(int bus_num, int slot, int function);
+PCIBus *pci_get_bus_devfn(int *devfnp, const char *devaddr);
 
 int pci_read_devaddr(Monitor *mon, const char *addr, int *domp, int *busp,
                      unsigned *slotp);
 
 int pci_parse_host_devaddr(const char *addr, int *busp,
                            int *slotp, int *funcp);
-PCIBus *pci_get_bus_devfn(int *devfnp, const char *devaddr);
 
 void pci_info(Monitor *mon);
 PCIBus *pci_bridge_init(PCIBus *bus, int devfn, uint16_t vid, uint16_t did,
@@ -366,15 +385,23 @@ pci_config_set_class(uint8_t *pci_config, uint16_t val)
     pci_set_word(&pci_config[PCI_CLASS_DEVICE], val);
 }
 
-typedef void (*pci_qdev_initfn)(PCIDevice *dev);
-void pci_qdev_register(const char *name, int size, pci_qdev_initfn init);
+typedef int (*pci_qdev_initfn)(PCIDevice *dev);
+typedef struct {
+    DeviceInfo qdev;
+    pci_qdev_initfn init;
+    PCIUnregisterFunc *exit;
+    PCIConfigReadFunc *config_read;
+    PCIConfigWriteFunc *config_write;
+} PCIDeviceInfo;
 
-PCIDevice *pci_create(const char *name, const char *devaddr);
+void pci_qdev_register(PCIDeviceInfo *info);
+void pci_qdev_register_many(PCIDeviceInfo *info);
+
+PCIDevice *pci_create(PCIBus *bus, int devfn, const char *name);
 PCIDevice *pci_create_simple(PCIBus *bus, int devfn, const char *name);
 
 /* lsi53c895a.c */
 #define LSI_MAX_DEVS 7
-void lsi_scsi_attach(DeviceState *host, BlockDriverState *bd, int id);
 
 /* vmware_vga.c */
 void pci_vmsvga_init(PCIBus *bus);
@@ -384,7 +411,7 @@ void usb_uhci_piix3_init(PCIBus *bus, int devfn);
 void usb_uhci_piix4_init(PCIBus *bus, int devfn);
 
 /* usb-ohci.c */
-void usb_ohci_init_pci(struct PCIBus *bus, int num_ports, int devfn);
+void usb_ohci_init_pci(struct PCIBus *bus, int devfn);
 
 /* prep_pci.c */
 PCIBus *pci_prep_init(qemu_irq *pic);
@@ -396,6 +423,6 @@ PCIBus *pci_apb_init(target_phys_addr_t special_base,
 
 /* sh_pci.c */
 PCIBus *sh_pci_register_bus(pci_set_irq_fn set_irq, pci_map_irq_fn map_irq,
-                            qemu_irq *pic, int devfn_min, int nirq);
+                            void *pic, int devfn_min, int nirq);
 
 #endif

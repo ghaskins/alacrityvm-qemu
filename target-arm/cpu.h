@@ -14,8 +14,7 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA  02110-1301 USA
+ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #ifndef CPU_ARM_H
 #define CPU_ARM_H
@@ -221,6 +220,7 @@ int cpu_arm_signal_handler(int host_signum, void *pinfo,
                            void *puc);
 int cpu_arm_handle_mmu_fault (CPUARMState *env, target_ulong address, int rw,
                               int mmu_idx, int is_softmuu);
+#define cpu_handle_mmu_fault cpu_arm_handle_mmu_fault
 
 void cpu_lock(void);
 void cpu_unlock(void);
@@ -406,7 +406,7 @@ void cpu_arm_set_cp_io(CPUARMState *env, int cpnum,
 #define cpu_signal_handler cpu_arm_signal_handler
 #define cpu_list arm_cpu_list
 
-#define CPU_SAVE_VERSION 1
+#define CPU_SAVE_VERSION 2
 
 /* MMU modes definitions */
 #define MMU_MODE0_SUFFIX _kernel

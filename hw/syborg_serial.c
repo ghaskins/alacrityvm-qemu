@@ -59,7 +59,7 @@ enum {
 typedef struct {
     SysBusDevice busdev;
     uint32_t int_enable;
-    int fifo_size;
+    uint32_t fifo_size;
     uint32_t *read_fifo;
     int read_pos;
     int read_count;
@@ -261,13 +261,13 @@ static void syborg_serial_event(void *opaque, int event)
     /* TODO: Report BREAK events?  */
 }
 
-static CPUReadMemoryFunc *syborg_serial_readfn[] = {
+static CPUReadMemoryFunc * const syborg_serial_readfn[] = {
      syborg_serial_read,
      syborg_serial_read,
      syborg_serial_read
 };
 
-static CPUWriteMemoryFunc *syborg_serial_writefn[] = {
+static CPUWriteMemoryFunc * const syborg_serial_writefn[] = {
      syborg_serial_write,
      syborg_serial_write,
      syborg_serial_write
@@ -315,7 +315,7 @@ static int syborg_serial_load(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-static void syborg_serial_init(SysBusDevice *dev)
+static int syborg_serial_init(SysBusDevice *dev)
 {
     SyborgSerialState *s = FROM_SYSBUS(SyborgSerialState, dev);
     int iomemtype;
@@ -329,7 +329,6 @@ static void syborg_serial_init(SysBusDevice *dev)
         qemu_chr_add_handlers(s->chr, syborg_serial_can_receive,
                               syborg_serial_receive, syborg_serial_event, s);
     }
-    s->fifo_size = qdev_get_prop_int(&dev->qdev, "fifo-size", 16);
     if (s->fifo_size <= 0) {
         fprintf(stderr, "syborg_serial: fifo too small\n");
         s->fifo_size = 16;
@@ -338,12 +337,22 @@ static void syborg_serial_init(SysBusDevice *dev)
 
     register_savevm("syborg_serial", -1, 1,
                     syborg_serial_save, syborg_serial_load, s);
+    return 0;
 }
+
+static SysBusDeviceInfo syborg_serial_info = {
+    .init = syborg_serial_init,
+    .qdev.name  = "syborg,serial",
+    .qdev.size  = sizeof(SyborgSerialState),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_UINT32("fifo-size", SyborgSerialState, fifo_size, 16),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
 
 static void syborg_serial_register_devices(void)
 {
-    sysbus_register_dev("syborg,serial", sizeof(SyborgSerialState),
-                        syborg_serial_init);
+    sysbus_register_withprop(&syborg_serial_info);
 }
 
 device_init(syborg_serial_register_devices)

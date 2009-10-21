@@ -76,8 +76,8 @@ typedef struct {
 
     uint32_t base;
     uint32_t pitch;
-    int rows;
-    int cols;
+    uint32_t rows;
+    uint32_t cols;
     int blank;
     int bpp;
     int rgb; /* 0 = BGR, 1 = RGB */
@@ -445,13 +445,13 @@ static void syborg_fb_write(void *opaque, target_phys_addr_t offset,
     }
 }
 
-static CPUReadMemoryFunc *syborg_fb_readfn[] = {
+static CPUReadMemoryFunc * const syborg_fb_readfn[] = {
     syborg_fb_read,
     syborg_fb_read,
     syborg_fb_read
 };
 
-static CPUWriteMemoryFunc *syborg_fb_writefn[] = {
+static CPUWriteMemoryFunc * const syborg_fb_writefn[] = {
     syborg_fb_write,
     syborg_fb_write,
     syborg_fb_write
@@ -503,45 +503,48 @@ static int syborg_fb_load(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-static void syborg_fb_init(SysBusDevice *dev)
+static int syborg_fb_init(SysBusDevice *dev)
 {
     SyborgFBState *s = FROM_SYSBUS(SyborgFBState, dev);
     int iomemtype;
-    int width;
-    int height;
 
     sysbus_init_irq(dev, &s->irq);
     iomemtype = cpu_register_io_memory(syborg_fb_readfn,
                                        syborg_fb_writefn, s);
     sysbus_init_mmio(dev, 0x1000, iomemtype);
 
-    width = qdev_get_prop_int(&dev->qdev, "width", 0);
-    height = qdev_get_prop_int(&dev->qdev, "height", 0);
-
     s->ds = graphic_console_init(syborg_fb_update_display,
                                  syborg_fb_invalidate_display,
                                  NULL, NULL, s);
 
-    if (width != 0 && height != 0) {
-        qemu_console_resize(s->ds, width, height);
+    if (s->cols != 0 && s->rows != 0) {
+        qemu_console_resize(s->ds, s->cols, s->rows);
     }
 
-    if (!width)
-        width = ds_get_width(s->ds);
-    if (!height)
-        height = ds_get_height(s->ds);
-
-    s->cols = width;
-    s->rows = height;
+    if (!s->cols)
+        s->cols = ds_get_width(s->ds);
+    if (!s->rows)
+        s->rows = ds_get_height(s->ds);
 
     register_savevm("syborg_framebuffer", -1, 1,
                     syborg_fb_save, syborg_fb_load, s);
+    return 0;
 }
+
+static SysBusDeviceInfo syborg_fb_info = {
+    .init = syborg_fb_init,
+    .qdev.name  = "syborg,framebuffer",
+    .qdev.size  = sizeof(SyborgFBState),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_UINT32("width",  SyborgFBState, cols, 0),
+        DEFINE_PROP_UINT32("height", SyborgFBState, rows, 0),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
 
 static void syborg_fb_register_devices(void)
 {
-    sysbus_register_dev("syborg,framebuffer", sizeof(SyborgFBState),
-                        syborg_fb_init);
+    sysbus_register_withprop(&syborg_fb_info);
 }
 
 device_init(syborg_fb_register_devices)

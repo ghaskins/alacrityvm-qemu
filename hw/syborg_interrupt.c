@@ -56,7 +56,7 @@ typedef struct {
 typedef struct {
     SysBusDevice busdev;
     int pending_count;
-    int num_irqs;
+    uint32_t num_irqs;
     syborg_int_flags *flags;
     qemu_irq parent_irq;
 } SyborgIntState;
@@ -156,13 +156,13 @@ static void syborg_int_write(void *opaque, target_phys_addr_t offset, uint32_t v
     syborg_int_update(s);
 }
 
-static CPUReadMemoryFunc *syborg_int_readfn[] = {
+static CPUReadMemoryFunc * const syborg_int_readfn[] = {
     syborg_int_read,
     syborg_int_read,
     syborg_int_read
 };
 
-static CPUWriteMemoryFunc *syborg_int_writefn[] = {
+static CPUWriteMemoryFunc * const syborg_int_writefn[] = {
     syborg_int_write,
     syborg_int_write,
     syborg_int_write
@@ -202,13 +202,12 @@ static int syborg_int_load(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-static void syborg_int_init(SysBusDevice *dev)
+static int syborg_int_init(SysBusDevice *dev)
 {
     SyborgIntState *s = FROM_SYSBUS(SyborgIntState, dev);
     int iomemtype;
 
     sysbus_init_irq(dev, &s->parent_irq);
-    s->num_irqs = qdev_get_prop_int(&dev->qdev, "num-interrupts", 64);
     qdev_init_gpio_in(&dev->qdev, syborg_int_set_irq, s->num_irqs);
     iomemtype = cpu_register_io_memory(syborg_int_readfn,
                                        syborg_int_writefn, s);
@@ -216,12 +215,22 @@ static void syborg_int_init(SysBusDevice *dev)
     s->flags = qemu_mallocz(s->num_irqs * sizeof(syborg_int_flags));
 
     register_savevm("syborg_int", -1, 1, syborg_int_save, syborg_int_load, s);
+    return 0;
 }
+
+static SysBusDeviceInfo syborg_int_info = {
+    .init = syborg_int_init,
+    .qdev.name  = "syborg,interrupt",
+    .qdev.size  = sizeof(SyborgIntState),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_UINT32("num-interrupts", SyborgIntState, num_irqs, 64),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
 
 static void syborg_interrupt_register_devices(void)
 {
-    sysbus_register_dev("syborg,interrupt", sizeof(SyborgIntState),
-                        syborg_int_init);
+    sysbus_register_withprop(&syborg_int_info);
 }
 
 device_init(syborg_interrupt_register_devices)

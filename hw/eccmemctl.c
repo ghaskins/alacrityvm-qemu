@@ -21,9 +21,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "hw.h"
+
 #include "sun4m.h"
-#include "sysemu.h"
+#include "sysbus.h"
 
 //#define DEBUG_ECC
 
@@ -126,6 +126,7 @@
 #define ECC_DIAG_MASK  (ECC_DIAG_SIZE - 1)
 
 typedef struct ECCState {
+    SysBusDevice busdev;
     qemu_irq irq;
     uint32_t regs[ECC_NREGS];
     uint8_t diag[ECC_DIAG_SIZE];
@@ -220,13 +221,13 @@ static uint32_t ecc_mem_readl(void *opaque, target_phys_addr_t addr)
     return ret;
 }
 
-static CPUReadMemoryFunc *ecc_mem_read[3] = {
+static CPUReadMemoryFunc * const ecc_mem_read[3] = {
     NULL,
     NULL,
     ecc_mem_readl,
 };
 
-static CPUWriteMemoryFunc *ecc_mem_write[3] = {
+static CPUWriteMemoryFunc * const ecc_mem_write[3] = {
     NULL,
     NULL,
     ecc_mem_writel,
@@ -250,50 +251,30 @@ static uint32_t ecc_diag_mem_readb(void *opaque, target_phys_addr_t addr)
     return ret;
 }
 
-static CPUReadMemoryFunc *ecc_diag_mem_read[3] = {
+static CPUReadMemoryFunc * const ecc_diag_mem_read[3] = {
     ecc_diag_mem_readb,
     NULL,
     NULL,
 };
 
-static CPUWriteMemoryFunc *ecc_diag_mem_write[3] = {
+static CPUWriteMemoryFunc * const ecc_diag_mem_write[3] = {
     ecc_diag_mem_writeb,
     NULL,
     NULL,
 };
 
-static int ecc_load(QEMUFile *f, void *opaque, int version_id)
-{
-    ECCState *s = opaque;
-    int i;
-
-    if (version_id != 3)
-        return -EINVAL;
-
-    for (i = 0; i < ECC_NREGS; i++)
-        qemu_get_be32s(f, &s->regs[i]);
-
-    for (i = 0; i < ECC_DIAG_SIZE; i++)
-        qemu_get_8s(f, &s->diag[i]);
-
-    qemu_get_be32s(f, &s->version);
-
-    return 0;
-}
-
-static void ecc_save(QEMUFile *f, void *opaque)
-{
-    ECCState *s = opaque;
-    int i;
-
-    for (i = 0; i < ECC_NREGS; i++)
-        qemu_put_be32s(f, &s->regs[i]);
-
-    for (i = 0; i < ECC_DIAG_SIZE; i++)
-        qemu_put_8s(f, &s->diag[i]);
-
-    qemu_put_be32s(f, &s->version);
-}
+static const VMStateDescription vmstate_ecc = {
+    .name ="ECC",
+    .version_id = 3,
+    .minimum_version_id = 3,
+    .minimum_version_id_old = 3,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT32_ARRAY(regs, ECCState, ECC_NREGS),
+        VMSTATE_BUFFER(diag, ECCState),
+        VMSTATE_UINT32(version, ECCState),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
 static void ecc_reset(void *opaque)
 {
@@ -314,27 +295,41 @@ static void ecc_reset(void *opaque)
     s->regs[ECC_ECR1] = 0;
 }
 
-void * ecc_init(target_phys_addr_t base, qemu_irq irq, uint32_t version)
+static int ecc_init1(SysBusDevice *dev)
 {
     int ecc_io_memory;
-    ECCState *s;
+    ECCState *s = FROM_SYSBUS(ECCState, dev);
 
-    s = qemu_mallocz(sizeof(ECCState));
-
-    s->version = version;
-    s->regs[0] = version;
-    s->irq = irq;
-
+    sysbus_init_irq(dev, &s->irq);
+    s->regs[0] = s->version;
     ecc_io_memory = cpu_register_io_memory(ecc_mem_read, ecc_mem_write, s);
-    cpu_register_physical_memory(base, ECC_SIZE, ecc_io_memory);
-    if (version == ECC_MCC) { // SS-600MP only
+    sysbus_init_mmio(dev, ECC_SIZE, ecc_io_memory);
+
+    if (s->version == ECC_MCC) { // SS-600MP only
         ecc_io_memory = cpu_register_io_memory(ecc_diag_mem_read,
                                                ecc_diag_mem_write, s);
-        cpu_register_physical_memory(base + 0x1000, ECC_DIAG_SIZE,
-                                     ecc_io_memory);
+        sysbus_init_mmio(dev, ECC_DIAG_SIZE, ecc_io_memory);
     }
-    register_savevm("ECC", base, 3, ecc_save, ecc_load, s);
+    vmstate_register(-1, &vmstate_ecc, s);
     qemu_register_reset(ecc_reset, s);
     ecc_reset(s);
-    return s;
+    return 0;
 }
+
+static SysBusDeviceInfo ecc_info = {
+    .init = ecc_init1,
+    .qdev.name  = "eccmemctl",
+    .qdev.size  = sizeof(ECCState),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_HEX32("version", ECCState, version, -1),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
+
+
+static void ecc_register_devices(void)
+{
+    sysbus_register_withprop(&ecc_info);
+}
+
+device_init(ecc_register_devices)

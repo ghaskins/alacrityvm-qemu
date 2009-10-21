@@ -24,6 +24,7 @@
 #include "cpu.h"
 #include "gdbstub.h"
 
+#ifdef KVM_UPSTREAM
 //#define DEBUG_KVM
 
 #ifdef DEBUG_KVM
@@ -239,8 +240,11 @@ static int kvm_has_msr_star(CPUState *env)
         if (ret < 0)
             return 0;
 
-        kvm_msr_list = qemu_mallocz(sizeof(msr_list) +
-                                    msr_list.nmsrs * sizeof(msr_list.indices[0]));
+        /* Old kernel modules had a bug and could write beyond the provided
+           memory. Allocate at least a safe amount of 1K. */
+        kvm_msr_list = qemu_mallocz(MAX(1024, sizeof(msr_list) +
+                                              msr_list.nmsrs *
+                                              sizeof(msr_list.indices[0])));
 
         kvm_msr_list->nmsrs = msr_list.nmsrs;
         ret = kvm_ioctl(env->kvm_state, KVM_GET_MSR_INDEX_LIST, kvm_msr_list);
@@ -685,10 +689,6 @@ int kvm_arch_put_registers(CPUState *env)
     if (ret < 0)
         return ret;
 
-    ret = kvm_get_mp_state(env);
-    if (ret < 0)
-        return ret;
-
     return 0;
 }
 
@@ -792,7 +792,7 @@ int kvm_arch_handle_exit(CPUState *env, struct kvm_run *run)
 #ifdef KVM_CAP_SET_GUEST_DEBUG
 int kvm_arch_insert_sw_breakpoint(CPUState *env, struct kvm_sw_breakpoint *bp)
 {
-    const static uint8_t int3 = 0xcc;
+    static const uint8_t int3 = 0xcc;
 
     if (cpu_memory_rw_debug(env, bp->pc, (uint8_t *)&bp->saved_insn, 1, 0) ||
         cpu_memory_rw_debug(env, bp->pc, (uint8_t *)&int3, 1, 1))
@@ -959,3 +959,6 @@ void kvm_arch_update_guest_debug(CPUState *env, struct kvm_guest_debug *dbg)
     }
 }
 #endif /* KVM_CAP_SET_GUEST_DEBUG */
+#endif
+
+#include "qemu-kvm-x86.c"

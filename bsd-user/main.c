@@ -14,9 +14,7 @@
  *  GNU General Public License for more details.
  *
  *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston,
- *  MA 02110-1301, USA.
+ *  along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 #include <stdlib.h>
 #include <stdio.h>
@@ -33,9 +31,17 @@
 /* For tb_lock */
 #include "exec-all.h"
 
+
+#include "envlist.h"
+
 #define DEBUG_LOGFILE "/tmp/qemu.log"
 
 int singlestep;
+#if defined(CONFIG_USE_GUEST_BASE)
+unsigned long mmap_min_addr;
+unsigned long guest_base;
+int have_guest_base;
+#endif
 
 static const char *interp_prefix = CONFIG_QEMU_PREFIX;
 const char *qemu_uname_release = CONFIG_UNAME_RELEASE;
@@ -53,39 +59,6 @@ void gemu_log(const char *fmt, ...)
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
-}
-
-void cpu_outb(CPUState *env, int addr, int val)
-{
-    fprintf(stderr, "outb: port=0x%04x, data=%02x\n", addr, val);
-}
-
-void cpu_outw(CPUState *env, int addr, int val)
-{
-    fprintf(stderr, "outw: port=0x%04x, data=%04x\n", addr, val);
-}
-
-void cpu_outl(CPUState *env, int addr, int val)
-{
-    fprintf(stderr, "outl: port=0x%04x, data=%08x\n", addr, val);
-}
-
-int cpu_inb(CPUState *env, int addr)
-{
-    fprintf(stderr, "inb: port=0x%04x\n", addr);
-    return 0;
-}
-
-int cpu_inw(CPUState *env, int addr)
-{
-    fprintf(stderr, "inw: port=0x%04x\n", addr);
-    return 0;
-}
-
-int cpu_inl(CPUState *env, int addr)
-{
-    fprintf(stderr, "inl: port=0x%04x\n", addr);
-    return 0;
 }
 
 #if defined(TARGET_I386)
@@ -637,6 +610,11 @@ static void usage(void)
            "-s size           set the stack size in bytes (default=%ld)\n"
            "-cpu model        select CPU (-cpu ? for list)\n"
            "-drop-ld-preload  drop LD_PRELOAD for target process\n"
+           "-E var=value      sets/modifies targets environment variable(s)\n"
+           "-U var            unsets targets environment variable(s)\n"
+#if defined(CONFIG_USE_GUEST_BASE)
+           "-B address        set guest_base address to address\n"
+#endif
            "-bsd type         select emulated BSD type FreeBSD/NetBSD/OpenBSD (default)\n"
            "\n"
            "Debug options:\n"
@@ -648,6 +626,12 @@ static void usage(void)
            "Environment variables:\n"
            "QEMU_STRACE       Print system calls and arguments similar to the\n"
            "                  'strace' program.  Enable by setting to any value.\n"
+           "You can use -E and -U options to set/unset environment variables\n"
+           "for target process.  It is possible to provide several variables\n"
+           "by repeating the option.  For example:\n"
+           "    -E var1=val2 -E var2=val2 -U LD_PRELOAD -U LD_DEBUG\n"
+           "Note that if you provide several changes to single variable\n"
+           "last change will stay in effect.\n"
            ,
            TARGET_ARCH,
            interp_prefix,
@@ -682,8 +666,8 @@ int main(int argc, char **argv)
     int optind;
     const char *r;
     int gdbstub_port = 0;
-    int drop_ld_preload = 0, environ_count = 0;
-    char **target_environ, **wrk, **dst;
+    char **target_environ, **wrk;
+    envlist_t *envlist = NULL;
     enum BSDType bsd_type = target_openbsd;
 
     if (argc <= 1)
@@ -691,6 +675,16 @@ int main(int argc, char **argv)
 
     /* init debug */
     cpu_set_log_filename(DEBUG_LOGFILE);
+
+    if ((envlist = envlist_create()) == NULL) {
+        (void) fprintf(stderr, "Unable to allocate envlist\n");
+        exit(1);
+    }
+
+    /* add current environment into the list */
+    for (wrk = environ; *wrk != NULL; wrk++) {
+        (void) envlist_setenv(envlist, *wrk);
+    }
 
     cpu_model = NULL;
     optind = 1;
@@ -721,6 +715,14 @@ int main(int argc, char **argv)
                 exit(1);
             }
             cpu_set_log(mask);
+        } else if (!strcmp(r, "E")) {
+            r = argv[optind++];
+            if (envlist_setenv(envlist, r) != 0)
+                usage();
+        } else if (!strcmp(r, "U")) {
+            r = argv[optind++];
+            if (envlist_unsetenv(envlist, r) != 0)
+                usage();
         } else if (!strcmp(r, "s")) {
             r = argv[optind++];
             x86_stack_size = strtol(r, (char **)&r, 0);
@@ -752,8 +754,13 @@ int main(int argc, char **argv)
 #endif
                 exit(1);
             }
+#if defined(CONFIG_USE_GUEST_BASE)
+        } else if (!strcmp(r, "B")) {
+           guest_base = strtol(argv[optind++], NULL, 0);
+           have_guest_base = 1;
+#endif
         } else if (!strcmp(r, "drop-ld-preload")) {
-            drop_ld_preload = 1;
+            (void) envlist_unsetenv(envlist, "LD_PRELOAD");
         } else if (!strcmp(r, "bsd")) {
             if (!strcasecmp(argv[optind], "freebsd")) {
                 bsd_type = target_freebsd;
@@ -818,19 +825,37 @@ int main(int argc, char **argv)
         do_strace = 1;
     }
 
-    wrk = environ;
-    while (*(wrk++))
-        environ_count++;
+    target_environ = envlist_to_environ(envlist, NULL);
+    envlist_free(envlist);
 
-    target_environ = malloc((environ_count + 1) * sizeof(char *));
-    if (!target_environ)
-        abort();
-    for (wrk = environ, dst = target_environ; *wrk; wrk++) {
-        if (drop_ld_preload && !strncmp(*wrk, "LD_PRELOAD=", 11))
-            continue;
-        *(dst++) = strdup(*wrk);
+#if defined(CONFIG_USE_GUEST_BASE)
+    /*
+     * Now that page sizes are configured in cpu_init() we can do
+     * proper page alignment for guest_base.
+     */
+    guest_base = HOST_PAGE_ALIGN(guest_base);
+
+    /*
+     * Read in mmap_min_addr kernel parameter.  This value is used
+     * When loading the ELF image to determine whether guest_base
+     * is needed.
+     *
+     * When user has explicitly set the quest base, we skip this
+     * test.
+     */
+    if (!have_guest_base) {
+        FILE *fp;
+
+        if ((fp = fopen("/proc/sys/vm/mmap_min_addr", "r")) != NULL) {
+            unsigned long tmp;
+            if (fscanf(fp, "%lu", &tmp) == 1) {
+                mmap_min_addr = tmp;
+                qemu_log("host mmap_min_addr=0x%lx\n", mmap_min_addr);
+            }
+            fclose(fp);
+        }
     }
-    *dst = NULL; /* NULL terminate target_environ */
+#endif /* CONFIG_USE_GUEST_BASE */
 
     if (loader_exec(filename, argv+optind, target_environ, regs, info) != 0) {
         printf("Error loading %s\n", filename);
@@ -844,6 +869,9 @@ int main(int argc, char **argv)
     free(target_environ);
 
     if (qemu_log_enabled()) {
+#if defined(CONFIG_USE_GUEST_BASE)
+        qemu_log("guest_base  0x%lx\n", guest_base);
+#endif
         log_page_dump();
 
         qemu_log("start_brk   0x" TARGET_ABI_FMT_lx "\n", info->start_brk);

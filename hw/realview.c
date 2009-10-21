@@ -111,7 +111,7 @@ static void realview_init(ram_addr_t ram_size,
                                 pic[48], pic[49], pic[50], pic[51], NULL);
     pci_bus = (PCIBus *)qdev_get_child_bus(dev, "pci");
     if (usb_enabled) {
-        usb_ohci_init_pci(pci_bus, 3, -1);
+        usb_ohci_init_pci(pci_bus, -1);
     }
     n = drive_get_max_bus(IF_SCSI);
     while (n >= 0) {
@@ -125,7 +125,7 @@ static void realview_init(ram_addr_t ram_size,
             smc91c111_init(nd, 0x4e000000, pic[28]);
             done_smc = 1;
         } else {
-            pci_nic_init(nd, "rtl8139", NULL);
+            pci_nic_init_nofail(nd, "rtl8139", NULL);
         }
     }
 
@@ -196,7 +196,7 @@ static void realview_init(ram_addr_t ram_size,
     arm_load_kernel(first_cpu, &realview_binfo);
 }
 
-QEMUMachine realview_machine = {
+static QEMUMachine realview_machine = {
     .name = "realview",
     .desc = "ARM RealView Emulation Baseboard (ARM926EJ-S)",
     .init = realview_init,

@@ -28,20 +28,27 @@
 #include "i8254.h"
 #include "qemu-kvm.h"
 
+extern VMStateDescription vmstate_pit;
+
 static PITState pit_state;
 
-static void kvm_pit_save(QEMUFile *f, void *opaque)
+static void kvm_pit_pre_save(void *opaque)
 {
-    PITState *s = opaque;
-    struct kvm_pit_state pit;
+    PITState *s = (void *)opaque;
+    struct kvm_pit_state2 pit2;
     struct kvm_pit_channel_state *c;
     struct PITChannelState *sc;
     int i;
 
-    kvm_get_pit(kvm_context, &pit);
-
+    if(qemu_kvm_has_pit_state2()) {
+        kvm_get_pit2(kvm_context, &pit2);
+        s->flags = pit2.flags;
+    } else {
+        /* pit2 is superset of pit struct so just cast it and use it */
+        kvm_get_pit(kvm_context, (struct kvm_pit_state *)&pit2);
+    }
     for (i = 0; i < 3; i++) {
-	c = &pit.channels[i];
+	c = &pit2.channels[i];
 	sc = &s->channels[i];
 	sc->count = c->count;
 	sc->latched_count = c->latched_count;
@@ -57,22 +64,19 @@ static void kvm_pit_save(QEMUFile *f, void *opaque)
 	sc->gate = c->gate;
 	sc->count_load_time = c->count_load_time;
     }
-
-    pit_save(f, s);
 }
 
-static int kvm_pit_load(QEMUFile *f, void *opaque, int version_id)
+static int kvm_pit_post_load(void *opaque, int version_id)
 {
     PITState *s = opaque;
-    struct kvm_pit_state pit;
+    struct kvm_pit_state2 pit2;
     struct kvm_pit_channel_state *c;
     struct PITChannelState *sc;
     int i;
 
-    pit_load(f, s, version_id);
-
+    pit2.flags = s->flags;
     for (i = 0; i < 3; i++) {
-	c = &pit.channels[i];
+	c = &pit2.channels[i];
 	sc = &s->channels[i];
 	c->count = sc->count;
 	c->latched_count = sc->latched_count;
@@ -89,18 +93,28 @@ static int kvm_pit_load(QEMUFile *f, void *opaque, int version_id)
 	c->count_load_time = sc->count_load_time;
     }
 
-    kvm_set_pit(kvm_context, &pit);
-
+    if(qemu_kvm_has_pit_state2()) {
+        kvm_set_pit2(kvm_context, &pit2);
+    } else {
+        kvm_set_pit(kvm_context, (struct kvm_pit_state *)&pit2);
+    }
     return 0;
+}
+
+static void dummy_timer(void *opaque)
+{
 }
 
 PITState *kvm_pit_init(int base, qemu_irq irq)
 {
     PITState *pit = &pit_state;
+    PITChannelState *s;
 
-    register_savevm(PIT_SAVEVM_NAME, base, PIT_SAVEVM_VERSION,
-		    kvm_pit_save, kvm_pit_load, pit);
-
+    s = &pit->channels[0];
+    s->irq_timer = qemu_new_timer(vm_clock, dummy_timer, s);
+    vmstate_pit.pre_save = kvm_pit_pre_save;
+    vmstate_pit.post_load = kvm_pit_post_load;
+    vmstate_register(base, &vmstate_pit, pit);
     qemu_register_reset(pit_reset, pit);
     pit_reset(pit);
 

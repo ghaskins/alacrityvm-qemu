@@ -2,6 +2,7 @@
 #define CONSOLE_H
 
 #include "qemu-char.h"
+#include "qdict.h"
 
 /* keyboard/mouse support */
 
@@ -44,7 +45,7 @@ struct MouseTransformInfo {
 };
 
 void do_info_mice(Monitor *mon);
-void do_mouse_set(Monitor *mon, int index);
+void do_mouse_set(Monitor *mon, const QDict *qdict);
 
 /* keysym is a unicode code except for special keys (see QEMU_KEY_xxx
    constants) */
@@ -302,7 +303,7 @@ void vga_hw_text_update(console_ch_t *chardata);
 
 int is_graphic_console(void);
 int is_fixedsize_console(void);
-CharDriverState *text_console_init(const char *p);
+CharDriverState *text_console_init(QemuOpts *opts);
 void text_consoles_set_display(DisplayState *ds);
 void console_select(unsigned int index);
 void console_color_init(DisplayState *ds);

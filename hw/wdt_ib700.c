@@ -14,9 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301,
- * USA.
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * By Richard W.M. Jones (rjones@redhat.com).
  */
@@ -54,7 +52,7 @@ static void ib700_write_enable_reg(void *vp, uint32_t addr, uint32_t data)
 
     ib700_debug("addr = %x, data = %x\n", addr, data);
 
-    timeout = (int64_t) time_map[data & 0xF] * ticks_per_sec;
+    timeout = (int64_t) time_map[data & 0xF] * get_ticks_per_sec();
     qemu_mod_timer(timer, qemu_get_clock (vm_clock) + timeout);
 }
 
@@ -90,23 +88,31 @@ static int ib700_load(QEMUFile *f, void *vp, int version)
     return 0;
 }
 
-/* Create and initialize a virtual IB700 during PC creation. */
-static void ib700_pc_init(PCIBus *unused)
+static int wdt_ib700_init(ISADevice *dev)
 {
+    timer = qemu_new_timer(vm_clock, ib700_timer_expired, NULL);
     register_savevm("ib700_wdt", -1, 0, ib700_save, ib700_load, NULL);
-
     register_ioport_write(0x441, 2, 1, ib700_write_disable_reg, NULL);
     register_ioport_write(0x443, 2, 1, ib700_write_enable_reg, NULL);
+
+    return 0;
 }
 
 static WatchdogTimerModel model = {
     .wdt_name = "ib700",
     .wdt_description = "iBASE 700",
-    .wdt_pc_init = ib700_pc_init,
 };
 
-void wdt_ib700_init(void)
+static ISADeviceInfo wdt_ib700_info = {
+    .qdev.name = "ib700",
+    .qdev.size = sizeof(ISADevice),
+    .init      = wdt_ib700_init,
+};
+
+static void wdt_ib700_register_devices(void)
 {
     watchdog_add_model(&model);
-    timer = qemu_new_timer(vm_clock, ib700_timer_expired, NULL);
+    isa_qdev_register(&wdt_ib700_info);
 }
+
+device_init(wdt_ib700_register_devices);

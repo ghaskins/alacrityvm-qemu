@@ -21,8 +21,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "hw.h"
+
 #include "sun4m.h"
+#include "sysbus.h"
 
 /* debug CS4231 */
 //#define DEBUG_CS
@@ -36,9 +37,10 @@
 #define CS_MAXDREG (CS_DREGS - 1)
 
 typedef struct CSState {
+    SysBusDevice busdev;
+    qemu_irq irq;
     uint32_t regs[CS_REGS];
     uint8_t dregs[CS_DREGS];
-    void *intctl;
 } CSState;
 
 #define CS_RAP(s) ((s)->regs[0] & CS_MAXDREG)
@@ -127,13 +129,13 @@ static void cs_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
     }
 }
 
-static CPUReadMemoryFunc *cs_mem_read[3] = {
+static CPUReadMemoryFunc * const cs_mem_read[3] = {
     cs_mem_readl,
     cs_mem_readl,
     cs_mem_readl,
 };
 
-static CPUWriteMemoryFunc *cs_mem_write[3] = {
+static CPUWriteMemoryFunc * const cs_mem_write[3] = {
     cs_mem_writel,
     cs_mem_writel,
     cs_mem_writel,
@@ -165,16 +167,33 @@ static int cs_load(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-void cs_init(target_phys_addr_t base, int irq, void *intctl)
+static int cs4231_init1(SysBusDevice *dev)
 {
-    int cs_io_memory;
-    CSState *s;
+    int io;
+    CSState *s = FROM_SYSBUS(CSState, dev);
 
-    s = qemu_mallocz(sizeof(CSState));
+    io = cpu_register_io_memory(cs_mem_read, cs_mem_write, s);
+    sysbus_init_mmio(dev, CS_SIZE, io);
+    sysbus_init_irq(dev, &s->irq);
 
-    cs_io_memory = cpu_register_io_memory(cs_mem_read, cs_mem_write, s);
-    cpu_register_physical_memory(base, CS_SIZE, cs_io_memory);
-    register_savevm("cs4231", base, 1, cs_save, cs_load, s);
+    register_savevm("cs4231", -1, 1, cs_save, cs_load, s);
     qemu_register_reset(cs_reset, s);
     cs_reset(s);
+    return 0;
 }
+
+static SysBusDeviceInfo cs4231_info = {
+    .init = cs4231_init1,
+    .qdev.name  = "SUNW,CS4231",
+    .qdev.size  = sizeof(CSState),
+    .qdev.props = (Property[]) {
+        {.name = NULL}
+    }
+};
+
+static void cs4231_register_devices(void)
+{
+    sysbus_register_withprop(&cs4231_info);
+}
+
+device_init(cs4231_register_devices)

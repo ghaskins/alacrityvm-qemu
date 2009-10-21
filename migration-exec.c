@@ -73,10 +73,7 @@ MigrationState *exec_start_outgoing_migration(const char *command,
         goto err_after_open;
     }
 
-    if (fcntl(s->fd, F_SETFD, O_NONBLOCK) == -1) {
-        dprintf("Unable to set nonblocking mode on file descriptor\n");
-        goto err_after_open;
-    }
+    socket_set_nonblock(s->fd);
 
     s->opaque = qemu_popen(f, "w");
 
@@ -109,7 +106,6 @@ static void exec_accept_incoming_migration(void *opaque)
     QEMUFile *f = opaque;
     int ret;
 
-    vm_stop(0); /* just in case */
     ret = qemu_loadvm_state(f);
     if (ret < 0) {
         fprintf(stderr, "load of migration failed\n");
@@ -118,8 +114,9 @@ static void exec_accept_incoming_migration(void *opaque)
     qemu_announce_self();
     dprintf("successfully loaded vm state\n");
     /* we've successfully migrated, close the fd */
-    qemu_set_fd_handler2(qemu_popen_fd(f), NULL, NULL, NULL, NULL);
-    vm_start();
+    qemu_set_fd_handler2(qemu_stdio_fd(f), NULL, NULL, NULL, NULL);
+    if (autostart)
+        vm_start();
 
 err:
     qemu_fclose(f);
@@ -136,7 +133,7 @@ int exec_start_incoming_migration(const char *command)
         return -errno;
     }
 
-    qemu_set_fd_handler2(qemu_popen_fd(f), NULL,
+    qemu_set_fd_handler2(qemu_stdio_fd(f), NULL,
 			 exec_accept_incoming_migration, NULL,
 			 (void *)(unsigned long)f);
 

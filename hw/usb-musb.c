@@ -16,8 +16,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ * with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * Only host-mode and non-DMA accesses are currently supported.
  */
@@ -282,6 +281,7 @@ typedef struct {
 
 struct MUSBState {
     qemu_irq *irqs;
+    USBBus bus;
     USBPort port;
 
     int idx;
@@ -331,7 +331,8 @@ struct MUSBState {
         s->ep[i].epnum = i;
     }
 
-    qemu_register_usb_port(&s->port, s, 0, musb_attach);
+    usb_bus_new(&s->bus, NULL /* FIXME */);
+    usb_register_port(&s->bus, &s->port, s, 0, musb_attach);
 
     return s;
 }
@@ -510,7 +511,7 @@ static inline void musb_schedule_cb(USBPacket *packey, void *opaque, int dir)
         ep->intv_timer[dir] = qemu_new_timer(vm_clock, musb_cb_tick, opaque);
 
     qemu_mod_timer(ep->intv_timer[dir], qemu_get_clock(vm_clock) +
-                    muldiv64(timeout, ticks_per_sec, 8000));
+                   muldiv64(timeout, get_ticks_per_sec(), 8000));
 }
 
 static void musb_schedule0_cb(USBPacket *packey, void *opaque)
@@ -591,7 +592,7 @@ static inline void musb_packet(MUSBState *s, MUSBEndPoint *ep,
     ep->packey[dir].complete_opaque = ep;
 
     if (s->port.dev)
-        ret = s->port.dev->handle_packet(s->port.dev, &ep->packey[dir]);
+        ret = s->port.dev->info->handle_packet(s->port.dev, &ep->packey[dir]);
     else
         ret = USB_RET_NODEV;
 
@@ -1437,13 +1438,13 @@ static void musb_writew(void *opaque, target_phys_addr_t addr, uint32_t value)
     };
 }
 
-CPUReadMemoryFunc *musb_read[] = {
+CPUReadMemoryFunc * const musb_read[] = {
     musb_readb,
     musb_readh,
     musb_readw,
 };
 
-CPUWriteMemoryFunc *musb_write[] = {
+CPUWriteMemoryFunc * const musb_write[] = {
     musb_writeb,
     musb_writeh,
     musb_writew,

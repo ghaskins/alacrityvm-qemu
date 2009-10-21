@@ -13,8 +13,7 @@
  *  GNU General Public License for more details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *  with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <stdio.h>
@@ -302,7 +301,7 @@ static int net_init(struct XenDevice *xendev)
 	return -1;
 
     vlan = qemu_find_vlan(netdev->xendev.dev, 1);
-    netdev->vs = qemu_new_vlan_client(vlan, "xen", NULL,
+    netdev->vs = qemu_new_vlan_client(vlan, NULL, "xen", NULL,
                                       net_rx_ok, net_rx_packet, NULL,
                                       NULL, netdev);
     snprintf(netdev->vs->info_str, sizeof(netdev->vs->info_str),

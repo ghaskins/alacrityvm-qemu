@@ -32,13 +32,18 @@
 #ifndef O_BINARY
 #define O_BINARY 0
 #endif
-
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 #ifndef ENOMEDIUM
 #define ENOMEDIUM ENODEV
 #endif
+#if !defined(ENOTSUP)
+#define ENOTSUP 4096
+#endif
 
-#ifndef HAVE_IOVEC
-#define HAVE_IOVEC
+#ifndef CONFIG_IOVEC
+#define CONFIG_IOVEC
 struct iovec {
     void *iov_base;
     size_t iov_len;
@@ -50,10 +55,8 @@ struct iovec {
 #ifdef _WIN32
 #define fsync _commit
 #define lseek _lseeki64
-#define ENOTSUP 4096
 extern int qemu_ftruncate64(int, int64_t);
 #define ftruncate qemu_ftruncate64
-
 
 static inline char *realpath(const char *path, char *resolved_path)
 {
@@ -104,7 +107,6 @@ void qemu_get_timedate(struct tm *tm, int offset);
 int qemu_timedate_diff(struct tm *tm);
 
 /* cutils.c */
-const char *fill_token(char *buf, int buf_size, const char *str, char);
 void pstrcpy(char *buf, int buf_size, const char *str);
 char *pstrcat(char *buf, int buf_size, const char *s);
 int strstart(const char *str, const char *val, const char **ptr);
@@ -112,6 +114,11 @@ int stristart(const char *str, const char *val, const char **ptr);
 int qemu_strnlen(const char *s, int max_len);
 time_t mktimegm(struct tm *tm);
 int qemu_fls(int i);
+int qemu_fdatasync(int fd);
+
+/* path.c */
+void init_paths(const char *prefix);
+const char *path(const char *pathname);
 
 #define qemu_isalnum(c)		isalnum((unsigned char)(c))
 #define qemu_isalpha(c)		isalpha((unsigned char)(c))
@@ -138,6 +145,9 @@ char *qemu_strndup(const char *str, size_t size);
 
 void *get_mmap_addr(unsigned long size);
 
+
+void qemu_mutex_lock_iothread(void);
+void qemu_mutex_unlock_iothread(void);
 
 /* Error handling.  */
 
@@ -171,6 +181,7 @@ typedef struct TextConsole TextConsole;
 typedef TextConsole QEMUConsole;
 typedef struct CharDriverState CharDriverState;
 typedef struct VLANState VLANState;
+typedef struct VLANClientState VLANClientState;
 typedef struct QEMUFile QEMUFile;
 typedef struct i2c_bus i2c_bus;
 typedef struct i2c_slave i2c_slave;
@@ -225,6 +236,7 @@ typedef struct QEMUIOVector {
 void qemu_iovec_init(QEMUIOVector *qiov, int alloc_hint);
 void qemu_iovec_init_external(QEMUIOVector *qiov, struct iovec *iov, int niov);
 void qemu_iovec_add(QEMUIOVector *qiov, void *base, size_t len);
+void qemu_iovec_concat(QEMUIOVector *dst, QEMUIOVector *src, size_t size);
 void qemu_iovec_destroy(QEMUIOVector *qiov);
 void qemu_iovec_reset(QEMUIOVector *qiov);
 void qemu_iovec_to_buffer(QEMUIOVector *qiov, void *buf);

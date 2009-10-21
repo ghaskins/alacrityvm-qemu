@@ -53,8 +53,8 @@ struct xlx_ethlite
     qemu_irq irq;
     VLANClientState *vc;
 
-    unsigned int c_tx_pingpong;
-    unsigned int c_rx_pingpong;
+    uint32_t c_tx_pingpong;
+    uint32_t c_rx_pingpong;
     unsigned int txbuf;
     unsigned int rxbuf;
 
@@ -152,11 +152,11 @@ eth_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
     }
 }
 
-static CPUReadMemoryFunc *eth_read[] = {
+static CPUReadMemoryFunc * const eth_read[] = {
     NULL, NULL, &eth_readl,
 };
 
-static CPUWriteMemoryFunc *eth_write[] = {
+static CPUWriteMemoryFunc * const eth_write[] = {
     NULL, NULL, &eth_writel,
 };
 
@@ -207,14 +207,12 @@ static void eth_cleanup(VLANClientState *vc)
     qemu_free(s);
 }
 
-static void xilinx_ethlite_init(SysBusDevice *dev)
+static int xilinx_ethlite_init(SysBusDevice *dev)
 {
     struct xlx_ethlite *s = FROM_SYSBUS(typeof (*s), dev);
     int regs;
 
     sysbus_init_irq(dev, &s->irq);
-    s->c_tx_pingpong = qdev_get_prop_int(&dev->qdev, "txpingpong", 1);
-    s->c_rx_pingpong = qdev_get_prop_int(&dev->qdev, "rxpingpong", 1);
     s->rxbuf = 0;
 
     regs = cpu_register_io_memory(eth_read, eth_write, s);
@@ -223,12 +221,23 @@ static void xilinx_ethlite_init(SysBusDevice *dev)
     qdev_get_macaddr(&dev->qdev, s->macaddr);
     s->vc = qdev_get_vlan_client(&dev->qdev,
                                  eth_can_rx, eth_rx, NULL, eth_cleanup, s);
+    return 0;
 }
+
+static SysBusDeviceInfo xilinx_ethlite_info = {
+    .init = xilinx_ethlite_init,
+    .qdev.name  = "xilinx,ethlite",
+    .qdev.size  = sizeof(struct xlx_ethlite),
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_UINT32("txpingpong", struct xlx_ethlite, c_tx_pingpong, 1),
+        DEFINE_PROP_UINT32("rxpingpong", struct xlx_ethlite, c_rx_pingpong, 1),
+        DEFINE_PROP_END_OF_LIST(),
+    }
+};
 
 static void xilinx_ethlite_register(void)
 {
-    sysbus_register_dev("xilinx,ethlite", sizeof (struct xlx_ethlite),
-                        xilinx_ethlite_init);
+    sysbus_register_withprop(&xilinx_ethlite_info);
 }
 
 device_init(xilinx_ethlite_register)
