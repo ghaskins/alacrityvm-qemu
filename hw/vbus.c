@@ -39,14 +39,11 @@ struct Priv {
 	PCIDevice                            dev;
 	int                                  vbusfd;
 	struct {
-		struct {
-			struct kvm_irq_routing_entry routing;
-			int                          irqfd;
-			int                          ioeventfd;
-		} irq[EVENTQ_COUNT];
-		int                                  count;
-		int                                  enabled:1;
-	} interrupts;
+		struct kvm_irq_routing_entry routing;
+		int                          irqfd;
+		int                          ioeventfd;
+		int                          enabled:1;
+	} interrupt;
 	struct {
 		int                          key;
 		uint32_t                     addr;
@@ -88,7 +85,7 @@ vbus_pci_pio_map(PCIDevice *pci_dev, int region_num,
 }
 
 static int
-vbus_pci_eventq_assign(struct Priv *priv, int idx,
+vbus_pci_eventq_assign(struct Priv *priv,
 		       uint32_t count, uint64_t ringp, uint64_t datap)
 {
 	PCIDevice *dev = &priv->dev;
@@ -100,11 +97,10 @@ vbus_pci_eventq_assign(struct Priv *priv, int idx,
 	int irqfd = 0, ioeventfd = 0;
 	int ret;
 
-	irq = &priv->interrupts.irq[idx].routing;
+	irq = &priv->interrupt.routing;
 
 	addr = *(uint32_t *)&dev->config[pos + PCI_MSI_ADDRESS_LO];
 	data = *(uint16_t *)&dev->config[pos + PCI_MSI_DATA_32];
-	data += idx;
 
 	irq->u.msi.address_lo = addr;
 	irq->u.msi.address_hi = 0;
@@ -141,7 +137,7 @@ vbus_pci_eventq_assign(struct Priv *priv, int idx,
 	irqfd = ret;
 
 	assign.flags = 0;
-	assign.queue = idx;
+	assign.queue = 0;
 	assign.fd    = irqfd;
 	assign.count = count;
 	assign.ring  = ringp;
@@ -158,7 +154,7 @@ vbus_pci_eventq_assign(struct Priv *priv, int idx,
 	ret = kvm_assign_ioeventfd(kvm_context,
 				   priv->signals,
 				   sizeof(__u32),
-				   ioeventfd, idx,
+				   ioeventfd, 0,
 				   IOEVENTFD_FLAG_DATAMATCH |
 				   IOEVENTFD_FLAG_PIO);
 	if (ret < 0) {
@@ -166,8 +162,8 @@ vbus_pci_eventq_assign(struct Priv *priv, int idx,
 		goto cleanup;
 	}
 
-	priv->interrupts.irq[idx].ioeventfd = ioeventfd;
-	priv->interrupts.irq[idx].irqfd     = irqfd;
+	priv->interrupt.ioeventfd = ioeventfd;
+	priv->interrupt.irqfd     = irqfd;
 
 	return 0;
 
@@ -210,7 +206,7 @@ bridgecall_qreg(struct Priv *priv)
 {
 	struct vbus_pci_call_desc *desc = &priv->registers.bridgecall;
 	struct vbus_pci_busreg params;
-	int i;
+	struct vbus_pci_eventqreg *qreg;
 	int ret;
 
 	if (desc->len != sizeof(params))
@@ -218,17 +214,14 @@ bridgecall_qreg(struct Priv *priv)
 
 	cpu_physical_memory_read(desc->datap, (void *)&params, sizeof(params));
 
-	if (!priv->interrupts.enabled || params.count != priv->interrupts.count)
+	if (!priv->interrupt.enabled || params.count != 1)
 		return -EINVAL;
 
-	for (i = 0; i < priv->interrupts.count; i++) {
-		struct vbus_pci_eventqreg *qreg = &params.eventq[i];
+	qreg = &params.eventq[0];
 
-		ret = vbus_pci_eventq_assign(priv, i,
-					     qreg->count, qreg->ring, qreg->data);
-		if (ret < 0)
-			return ret;
-	}
+	ret = vbus_pci_eventq_assign(priv, qreg->count, qreg->ring, qreg->data);
+	if (ret < 0)
+		return ret;
 
 	ioctl(priv->vbusfd, VBUS_KVM_READY, NULL);
 
@@ -318,7 +311,7 @@ vbus_pci_cap_init(PCIDevice *dev)
 
 	memset(&dev->config[offset], 0, PCI_CAPABILITY_CONFIG_MSI_LENGTH);
 	dev->config[offset] = PCI_CAP_ID_MSI;
-	dev->config[offset+PCI_MSI_FLAGS] = 0x06; /* request 8 vectors */
+	dev->config[offset+PCI_MSI_FLAGS] = 0; /* request 1 vector */
 	dev->cap.length += PCI_CAPABILITY_CONFIG_MSI_LENGTH;
 
 	return 0;
@@ -337,18 +330,8 @@ vbus_pci_cap_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
 	if (!(addr <= ctrl && (addr + len) > ctrl))
 		return;
 
-	if (!priv->interrupts.enabled && val & 1) {
-		int total;
-		uint8_t flags = dev->config[pos+PCI_MSI_FLAGS];
-
-		total = 1 << ((flags & PCI_MSI_FLAGS_QSIZE) >> 4);
-
-		if (total > EVENTQ_COUNT)
-			total = EVENTQ_COUNT;
-
-		priv->interrupts.count   = total;
-		priv->interrupts.enabled = 1;
-	}
+	if (!priv->interrupt.enabled && val & 1)
+		priv->interrupt.enabled = 1;
 }
 
 void
@@ -403,7 +386,7 @@ pci_vbus_init(PCIBus *bus)
 
 	priv = to_priv(dev);
 
-	memset(&priv->interrupts, 0, sizeof(priv->interrupts));
+	memset(&priv->interrupt, 0, sizeof(priv->interrupt));
 	memset(&priv->mmio, 0, sizeof(priv->mmio));
 	memset(&priv->registers, 0, sizeof(priv->registers));
 
