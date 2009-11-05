@@ -40,7 +40,7 @@
 #include "loader.h"
 #include "elf.h"
 #include "device-assignment.h"
-#include "vbus.h"
+#include "vbus-bridge.h"
 
 #include "qemu-kvm.h"
 
@@ -1274,7 +1274,7 @@ static void pc_init1(ram_addr_t ram_size,
     }
 
     if (pci_enabled) {
-      pci_vbus_init(pci_bus);
+      pci_vbus_bridge_init(pci_bus);
     }
 
     for(i = 0; i < nb_nics; i++) {

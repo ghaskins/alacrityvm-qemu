@@ -16,7 +16,7 @@
 #include "hw.h"
 #include "pci.h"
 
-#include "vbus.h"
+#include "vbus-bridge.h"
 
 #define  PCI_CAP_ID_MSI	0x05
 
@@ -335,7 +335,7 @@ vbus_pci_cap_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
 }
 
 void
-pci_vbus_init(PCIBus *bus)
+pci_vbus_bridge_init(PCIBus *bus)
 {
 	struct Priv *priv;
 	PCIDevice *dev;
