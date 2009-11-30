@@ -11,8 +11,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
+#include <sys/eventfd.h>
 #include <linux/vbus_kvm.h>
 #include "qemu-kvm.h"
+#include "pthread.h"
 #include "hw.h"
 #include "pci.h"
 
@@ -39,10 +41,16 @@ struct Priv {
 	PCIDevice                            dev;
 	int                                  vbusfd;
 	struct {
-		struct kvm_irq_routing_entry routing;
-		int                          irqfd;
-		int                          ioeventfd;
-		int                          enabled:1;
+		int                          inputfd;
+		int                          outputfd;
+		struct {
+			struct kvm_irq_routing_entry routing;
+			int                          enabled:1;
+		} msi;
+		struct {
+			pthread_t            thread;
+			pthread_barrier_t    barrier;
+		} intx;
 	} interrupt;
 	struct {
 		int                          key;
@@ -85,19 +93,16 @@ vbus_pci_pio_map(PCIDevice *pci_dev, int region_num,
 }
 
 static int
-vbus_pci_eventq_assign(struct Priv *priv,
-		       uint32_t count, uint64_t ringp, uint64_t datap)
+vbus_pci_attach_msi(struct Priv *priv)
 {
 	PCIDevice *dev = &priv->dev;
-	struct vbus_kvm_eventq_assign assign;
 	struct kvm_irq_routing_entry *irq;
 	unsigned int pos = dev->cap.start;
 	uint32_t addr;
 	uint16_t data;
-	int irqfd = 0, ioeventfd = 0;
 	int ret;
 
-	irq = &priv->interrupt.routing;
+	irq = &priv->interrupt.msi.routing;
 
 	addr = *(uint32_t *)&dev->config[pos + PCI_MSI_ADDRESS_LO];
 	data = *(uint16_t *)&dev->config[pos + PCI_MSI_DATA_32];
@@ -134,11 +139,76 @@ vbus_pci_eventq_assign(struct Priv *priv,
 		return ret;
 	}
 
-	irqfd = ret;
+	priv->interrupt.inputfd = ret;
+
+	return 0;
+}
+
+static void *intx_thread_fn(void *arg)
+{
+	struct Priv *priv = (struct Priv *)arg;
+	int ret;
+
+	pthread_barrier_wait(&priv->interrupt.intx.barrier);
+
+	for (;;) {
+		uint64_t val;
+		uint64_t i;
+
+		ret = read(priv->interrupt.inputfd, &val, sizeof(val));
+		if (ret < 0) {
+			perror("vbus: failed to read intx thread");
+			exit(ret);
+		}
+
+		for (i = 0; i < val; i++)
+			qemu_irq_pulse(priv->dev.irq[0]);
+	}
+}
+
+static int
+vbus_pci_attach_intx(struct Priv *priv)
+{
+	int ret;
+
+	ret = eventfd(0, 0);
+	if (ret < 0)
+		return ret;
+
+	priv->interrupt.inputfd = ret;
+
+	pthread_barrier_init(&priv->interrupt.intx.barrier, NULL, 2);
+
+	ret = pthread_create(&priv->interrupt.intx.thread, NULL,
+			     intx_thread_fn, priv);
+	if (ret < 0)
+		return ret;
+
+	pthread_barrier_wait(&priv->interrupt.intx.barrier);
+
+	return 0;
+}
+
+static int
+vbus_pci_eventq_assign(struct Priv *priv,
+		       uint32_t count, uint64_t ringp, uint64_t datap)
+{
+	struct vbus_kvm_eventq_assign assign;
+	int outputfd = 0;
+	int ret;
+
+	if (priv->interrupt.msi.enabled)
+		ret = vbus_pci_attach_msi(priv);
+	else
+		ret = vbus_pci_attach_intx(priv);
+	if (ret < 0) {
+		perror("vbus: failed to attach interrupt");
+		goto cleanup;
+	}
 
 	assign.flags = 0;
 	assign.queue = 0;
-	assign.fd    = irqfd;
+	assign.fd    = priv->interrupt.inputfd;
 	assign.count = count;
 	assign.ring  = ringp;
 	assign.data  = datap;
@@ -149,12 +219,12 @@ vbus_pci_eventq_assign(struct Priv *priv,
 		goto cleanup;
 	}
 
-	ioeventfd = ret;
+	outputfd = ret;
 
 	ret = kvm_assign_ioeventfd(kvm_context,
 				   priv->signals,
 				   sizeof(__u32),
-				   ioeventfd, 0,
+				   outputfd, 0,
 				   IOEVENTFD_FLAG_DATAMATCH |
 				   IOEVENTFD_FLAG_PIO);
 	if (ret < 0) {
@@ -162,17 +232,18 @@ vbus_pci_eventq_assign(struct Priv *priv,
 		goto cleanup;
 	}
 
-	priv->interrupt.ioeventfd = ioeventfd;
-	priv->interrupt.irqfd     = irqfd;
+	priv->interrupt.outputfd = outputfd;
 
 	return 0;
 
 cleanup:
-	if (irqfd)
-		close(irqfd);
+	if (priv->interrupt.inputfd) {
+		close(priv->interrupt.inputfd);
+		priv->interrupt.inputfd = 0;
+	}
 
-	if (ioeventfd)
-		close(ioeventfd);
+	if (outputfd)
+		close(outputfd);
 
 	return ret;
 }
@@ -214,7 +285,7 @@ bridgecall_qreg(struct Priv *priv)
 
 	cpu_physical_memory_read(desc->datap, (void *)&params, sizeof(params));
 
-	if (!priv->interrupt.enabled || params.count != 1)
+	if (params.count != 1)
 		return -EINVAL;
 
 	qreg = &params.eventq[0];
@@ -330,8 +401,8 @@ vbus_pci_cap_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
 	if (!(addr <= ctrl && (addr + len) > ctrl))
 		return;
 
-	if (!priv->interrupt.enabled && val & 1)
-		priv->interrupt.enabled = 1;
+	if (!priv->interrupt.msi.enabled && val & 1)
+		priv->interrupt.msi.enabled = 1;
 }
 
 void
@@ -378,6 +449,7 @@ pci_vbus_bridge_init(PCIBus *bus)
 	pci_config_set_class(config, PCI_CLASS_BRIDGE_OTHER);
 
 	config[0x08] = VBUS_PCI_ABI_VERSION;
+	config[0x3d] = 1; /* advertise legacy intx */
 
 	pci_enable_capability_support(dev, 0,
 				      NULL,
