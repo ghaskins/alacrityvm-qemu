@@ -2643,6 +2643,70 @@ static int net_handle_fd_param(Monitor *mon, const char *param)
     }
 }
 
+static int net_init_venetmacvlan(QemuOpts *opts,
+			     Monitor *mon,
+			     const char *name,
+			     VLANState *vlan)
+{
+    const char *macaddr;
+    const char *script;
+    const char *ll_ifname;
+    char devname[512];
+    char ifname[64];
+    int ret;
+
+    ret = vbus_device_create("venet-macvlan", devname, sizeof(devname));
+    if (ret < 0) {
+      qemu_error("failed to create venet-macvlan device: %d\n", ret);
+      return -1;
+    }
+
+    ll_ifname = qemu_opt_get(opts, "lowerdev");
+    if (ll_ifname) {
+      ret = vbus_device_attr_set(devname, "ll_ifname", ll_ifname);
+      if (ret < 0) {
+	qemu_error("failed to set venet-macvlan ll_ifname: %d\n", ret);
+	return -1;
+      }
+    } else {
+	qemu_error("must set lowerdev attribute of venet-macvlan.\n");
+	return -1;
+    }
+
+    macaddr = qemu_opt_get(opts, "macaddr");
+    if (macaddr) {
+      ret = vbus_device_attr_set(devname, "client_mac", macaddr);
+      if (ret < 0) {
+	qemu_error("failed to set venet-tap client-mac: %d\n", ret);
+	return -1;
+      }
+
+    }
+
+    ret = vbus_device_attr_set(devname, "enabled", "1");
+    if (ret < 0) {
+      qemu_error("failed to enable venet-macvlan: %d\n", ret);
+      return -1;
+    }
+
+    ret = vbus_device_attr_get(devname, "ifname", ifname, sizeof(ifname));
+    if (ret < 0) {
+      qemu_error("failed to read venet-tap ifname: %d\n", ret);
+      return -1;
+    }
+
+    script = qemu_opt_get(opts, "script");
+    if (!script)
+            script = DEFAULT_NETWORK_SCRIPT;
+
+    ret = launch_script(script, ifname, 0);
+    if (ret < 0) {
+      qemu_error("failed to execute ifup script: %d\n", ret);
+      return -1;
+    }
+
+    return 0;
+}
 static int net_init_venettap(QemuOpts *opts,
 			     Monitor *mon,
 			     const char *name,
@@ -3145,6 +3209,26 @@ static struct {
         .desc = {
             NET_COMMON_PARAMS_DESC,
             {
+                .name = "macaddr",
+                .type = QEMU_OPT_STRING,
+                .help = "MAC address",
+	    }, {
+                .name = "script",
+                .type = QEMU_OPT_STRING,
+                .help = "script to initialize the interface",
+            },
+            { /* end of list */ }
+        },
+    }, {
+        .type = "venet-macvlan",
+        .init = net_init_venetmacvlan,
+        .desc = {
+            NET_COMMON_PARAMS_DESC,
+            {
+                .name = "lowerdev",
+                .type = QEMU_OPT_STRING,
+                .help = "dev to attach macvlan to",
+	    }, {
                 .name = "macaddr",
                 .type = QEMU_OPT_STRING,
                 .help = "MAC address",
