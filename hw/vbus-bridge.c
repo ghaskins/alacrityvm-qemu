@@ -43,6 +43,7 @@ struct Priv {
 	struct {
 		int                          inputfd;
 		int                          outputfd;
+		void                        *outputhandle;
 		struct {
 			struct kvm_irq_routing_entry routing;
 			int                          enabled:1;
@@ -58,7 +59,6 @@ struct Priv {
 	} mmio;
 	struct vbus_pci_regs                 registers;
 	uint32_t                             signals;
-	uint32_t                             hcver;
 };
 
 static struct Priv *to_priv(PCIDevice *dev)
@@ -81,15 +81,8 @@ vbus_pci_pio_map(PCIDevice *pci_dev, int region_num,
 		  uint32_t addr, uint32_t size, int type)
 {
 	struct Priv *priv = to_priv(pci_dev);
-	int ret;
 
-	if (!priv->signals) {
-		priv->signals = addr;
-		ret = ioctl(priv->vbusfd, VBUS_KVM_SIGADDR_ASSIGN, &addr);
-
-		if (ret < 0)
-			perror("failed to assign signal address");
-	}
+	priv->signals = addr;
 }
 
 static int
@@ -144,6 +137,15 @@ vbus_pci_attach_msi(struct Priv *priv)
 	return 0;
 }
 
+static void
+vbus_pci_detach_msi(struct Priv *priv)
+{
+	struct kvm_irq_routing_entry *irq;
+	irq = &priv->interrupt.msi.routing;
+
+	kvm_del_routing_entry(kvm_context, irq);
+}
+
 static void *intx_thread_fn(void *arg)
 {
 	struct Priv *priv = (struct Priv *)arg;
@@ -189,6 +191,13 @@ vbus_pci_attach_intx(struct Priv *priv)
 	return 0;
 }
 
+static void
+vbus_pci_detach_intx(struct Priv *priv)
+{
+	pthread_cancel(priv->interrupt.intx.thread);
+	pthread_join(priv->interrupt.intx.thread, NULL);
+}
+
 static int
 vbus_pci_eventq_assign(struct Priv *priv,
 		       uint32_t count, uint64_t ringp, uint64_t datap)
@@ -226,7 +235,8 @@ vbus_pci_eventq_assign(struct Priv *priv,
 				   sizeof(__u32),
 				   outputfd, 0,
 				   IOEVENTFD_FLAG_DATAMATCH |
-				   IOEVENTFD_FLAG_PIO);
+				   IOEVENTFD_FLAG_PIO,
+				   &priv->interrupt.outputhandle);
 	if (ret < 0) {
 		perror("vbus: failed to assign ioeventfd");
 		goto cleanup;
@@ -249,10 +259,82 @@ cleanup:
 }
 
 static int
+bridge_reset(struct Priv *priv)
+{
+	struct vbus_kvm_negotiate negotiate = {
+		.magic        = VBUS_KVM_ABI_MAGIC,
+		.version      = VBUS_KVM_ABI_VERSION,
+		.capabilities = 0, /* no advanced features (yet) */
+	};
+	struct vbus_kvm_open openargs = {
+		.vmfd         = kvm_state->vmfd,
+	};
+	int fd = -1;
+	int ret;
+	int ver;
+
+	if (priv->interrupt.outputfd) {
+		ret = kvm_deassign_ioeventfd(kvm_context,
+					     priv->interrupt.outputhandle);
+		if (ret < 0)
+			perror("failed to deassign");
+
+		close(priv->interrupt.outputfd);
+		priv->interrupt.outputfd = 0;
+	}
+
+	if (priv->interrupt.inputfd) {
+		if (priv->interrupt.msi.enabled)
+			vbus_pci_detach_msi(priv);
+		else
+			vbus_pci_detach_intx(priv);
+			
+		close(priv->interrupt.inputfd);
+		priv->interrupt.inputfd = 0;
+	}
+
+	if (priv->vbusfd != -1) {
+		close(priv->vbusfd);
+		priv->vbusfd = -1;
+	}
+
+	fd = open("/dev/vbus-kvm", 0);
+	if (fd < 0)
+		return -EINVAL;
+
+	ret = ioctl(fd, VBUS_KVM_NEGOTIATE, &negotiate);
+	if (ret < 0)
+		goto out;
+
+	ret = ioctl(fd, VBUS_KVM_OPEN, &openargs);
+	if (ret < 0)
+		goto out;
+
+	ver = ret;
+
+	if (priv->signals) {
+		ret = ioctl(fd, VBUS_KVM_SIGADDR_ASSIGN, &priv->signals);
+		if (ret < 0) {
+			perror("failed to assign signal address");
+			goto out;
+		}
+	}
+
+	priv->vbusfd = fd;
+
+	return ver;
+
+out:
+	close(fd);
+	return ret;
+}
+
+static int
 bridgecall_negotiate(struct Priv *priv)
 {
 	struct vbus_pci_call_desc *desc = &priv->registers.bridgecall;
 	struct vbus_pci_bridge_negotiate params;
+	int ret;
 
 	if (desc->len != sizeof(params))
 		return -EINVAL;
@@ -262,14 +344,16 @@ bridgecall_negotiate(struct Priv *priv)
 	if (params.magic != VBUS_PCI_ABI_MAGIC)
 		return -EINVAL;
 
-	if (params.version != priv->hcver)
-		return -EINVAL;
-
 	params.capabilities = 0;
+
+	ret = bridge_reset(priv);
+
+	if (params.version != ret)
+		ret = -EINVAL;
 
 	cpu_physical_memory_write(desc->datap, (void *)&params, sizeof(params));
 
-	return 0;
+	return ret;
 }
 
 static int
@@ -281,6 +365,9 @@ bridgecall_qreg(struct Priv *priv)
 	int ret;
 
 	if (desc->len != sizeof(params))
+		return -EINVAL;
+
+	if (priv->vbusfd == -1)
 		return -EINVAL;
 
 	cpu_physical_memory_read(desc->datap, (void *)&params, sizeof(params));
@@ -307,6 +394,9 @@ bridgecall_fwd_call(struct Priv *priv, int nr)
 	int ret;
 
 	if (desc->len != sizeof(params))
+		return -EINVAL;
+
+	if (priv->vbusfd == -1)
 		return -EINVAL;
 
 	cpu_physical_memory_read(desc->datap, (void *)&params, sizeof(params));
@@ -401,8 +491,7 @@ vbus_pci_cap_write_config(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
 	if (!(addr <= ctrl && (addr + len) > ctrl))
 		return;
 
-	if (!priv->interrupt.msi.enabled && val & 1)
-		priv->interrupt.msi.enabled = 1;
+	priv->interrupt.msi.enabled = val & 1;
 }
 
 void
@@ -418,9 +507,6 @@ pci_vbus_bridge_init(PCIBus *bus)
 		.version      = VBUS_KVM_ABI_VERSION,
 		.capabilities = 0, /* no advanced features (yet) */
 	};
-	struct vbus_kvm_open openargs = {
-		.vmfd         = kvm_state->vmfd,
-	};
 
 	if (!kvm_check_extension(kvm_state, KVM_CAP_IRQFD)
 	    || !kvm_check_extension(kvm_state, KVM_CAP_IOEVENTFD))
@@ -431,16 +517,18 @@ pci_vbus_bridge_init(PCIBus *bus)
 		return;
 
 	ret = ioctl(fd, VBUS_KVM_NEGOTIATE, &negotiate);
+	close(fd);
+
 	if (ret < 0) {
 		perror("vbus present but failed to negotiate");
-		goto out;
+		return;
 	}
 
 	dev = pci_register_device(bus, "vbus", sizeof(*priv),
 				  -1, NULL, NULL);
 	if (!dev) {
 		perror("vbus present but PCI allocation failed");
-		goto out;
+		return;
 	}
 
 	config = dev->config;
@@ -463,17 +551,9 @@ pci_vbus_bridge_init(PCIBus *bus)
 	memset(&priv->registers, 0, sizeof(priv->registers));
 
 	priv->signals = 0;
-	priv->vbusfd = fd;
+	priv->vbusfd = -1;
 	priv->mmio.key = cpu_register_io_memory(vbus_pci_read, vbus_pci_write,
 						priv);
-
-	ret = ioctl(fd, VBUS_KVM_OPEN, &openargs);
-	if (ret < 0) {
-		perror("vbus present but failed to open");
-		goto out;
-	}
-
-	priv->hcver = ret;
 
 	pci_register_bar(dev, 0, sizeof(struct vbus_pci_regs),
 			 PCI_ADDRESS_SPACE_MEM, vbus_pci_mmio_map);
@@ -481,6 +561,4 @@ pci_vbus_bridge_init(PCIBus *bus)
 			 PCI_ADDRESS_SPACE_IO, vbus_pci_pio_map);
 
 	return;
-out:
-	close(fd);
 }

@@ -887,7 +887,7 @@ enum {
  * \param flags FLAG_PIO: PIO, else MMIO, FLAG_DATAMATCH, datamatch valid
  */
 int kvm_assign_ioeventfd(kvm_context_t kvm, unsigned long addr, size_t len,
-			  int fd, __u64 datamatch, int flags);
+			 int fd, __u64 datamatch, int flags, void **handle);
 
 /*!
  * \brief Deassign an ioeventfd from a previously registered IO port
@@ -899,8 +899,7 @@ int kvm_assign_ioeventfd(kvm_context_t kvm, unsigned long addr, size_t len,
  * \param fd The eventfd file-descriptor
  * \param flags FLAG_PIO: PIO, else MMIO
  */
-int kvm_deassign_ioeventfd(kvm_context_t kvm, unsigned long addr,
-			    int fd, int flags);
+int kvm_deassign_ioeventfd(kvm_context_t kvm, void *handle);
 
 #ifdef KVM_CAP_DEVICE_MSIX
 int kvm_assign_set_msix_nr(kvm_context_t kvm,

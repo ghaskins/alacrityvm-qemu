@@ -1416,48 +1416,59 @@ int kvm_irqfd(kvm_context_t kvm, int gsi, int flags)
 #include <sys/eventfd.h>
 
 int kvm_assign_ioeventfd(kvm_context_t kvm, unsigned long addr, size_t len,
-			  int fd, __u64 datamatch, int flags)
+			 int fd, __u64 datamatch, int flags, void **handle)
 {
 	int r;
-	int type = flags & IOEVENTFD_FLAG_PIO; 
-	struct kvm_ioeventfd data = {
-		.datamatch = datamatch,
-		.addr    = addr,
-		.len     = len,
-		.fd      = fd,
-	};
-
-	data.flags |= flags & IOEVENTFD_FLAG_DATAMATCH ?
-	  KVM_IOEVENTFD_FLAG_DATAMATCH : 0;
-	data.flags |= type ? KVM_IOEVENTFD_FLAG_PIO : 0;
+	int type = flags & IOEVENTFD_FLAG_PIO;
+	struct kvm_ioeventfd *_handle;
 
 	if (!kvm_check_extension(kvm_state, KVM_CAP_IOEVENTFD))
 		return -ENOENT;
+	
+	_handle = qemu_malloc(sizeof(*_handle));
+	/* check if it worked? */
 
-	r = ioctl(kvm_state->vmfd, KVM_IOEVENTFD, &data);
-	if (r == -1)
-		r = -errno;
+	memset(_handle, 0, sizeof(*_handle));
+
+	_handle->datamatch = datamatch;
+	_handle->addr      = addr;
+	_handle->len       = len;
+	_handle->fd        = fd;
+
+	_handle->flags |= flags & IOEVENTFD_FLAG_DATAMATCH ?
+		KVM_IOEVENTFD_FLAG_DATAMATCH : 0;
+	_handle->flags |= type ? KVM_IOEVENTFD_FLAG_PIO : 0;
+
+	r = ioctl(kvm_state->vmfd, KVM_IOEVENTFD, _handle);
+	if (r == -1) {
+		qemu_free(_handle);
+		return -errno;
+	}
+
+	*handle = _handle;
+
 	return r;
 }
 
-int kvm_deassign_ioeventfd(kvm_context_t kvm, unsigned long addr, int fd,
-			    int flags)
+int kvm_deassign_ioeventfd(kvm_context_t kvm, void *handle)
 {
 	int r;
-	int type = flags & IOEVENTFD_FLAG_PIO; 
-	struct kvm_ioeventfd data = {
-		.addr    = addr,
-		.fd      = fd,
-		.flags   = KVM_IOEVENTFD_FLAG_DEASSIGN |
-		(type ? KVM_IOEVENTFD_FLAG_PIO : 0),
-	};
+	struct kvm_ioeventfd *_handle = (struct kvm_ioeventfd *)handle;
 
 	if (!kvm_check_extension(kvm_state, KVM_CAP_IOEVENTFD))
 		return -ENOENT;
+	
+	if (!handle)
+		return -EINVAL;
 
-	r = ioctl(kvm_state->vmfd, KVM_IOEVENTFD, &data);
+	_handle->flags |= KVM_IOEVENTFD_FLAG_DEASSIGN;
+
+	r = ioctl(kvm_state->vmfd, KVM_IOEVENTFD, _handle);
 	if (r == -1)
 		r = -errno;
+
+	qemu_free(_handle);
+
 	return r;
 }
 
